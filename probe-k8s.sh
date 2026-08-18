@@ -6,9 +6,9 @@
 # 本脚本对每个候选 pod 探测 6 个条件，输出 attach 路径建议 + 批量清单。
 #
 # 用法:
-#   bash tools/probe-k8s.sh <pod-flag>           # 摸底匹配的 pod
-#   bash tools/probe-k8s.sh <pod-flag> --all     # 含非 Running
-#   bash tools/probe-k8s.sh --csv <pod-flag>     # CSV 清单（可排序筛选）
+#   bash probe-k8s.sh <pod-flag>           # 摸底匹配的 pod
+#   bash probe-k8s.sh <pod-flag> --all     # 含非 Running
+#   bash probe-k8s.sh --csv <pod-flag>     # CSV 清单（可排序筛选）
 set -uo pipefail
 
 log_info()  { printf "\033[34m%s\033[0m\n" "$*"; }
@@ -30,7 +30,7 @@ for a in "$@"; do
     *) FLAG="$a" ;;
   esac
 done
-[ -z "$FLAG" ] && { echo 'usage: bash tools/probe-k8s.sh [--csv] [--all] <pod-flag>'; exit 1; }
+[ -z "$FLAG" ] && { echo 'usage: bash probe-k8s.sh [--csv] [--all] <pod-flag>'; exit 1; }
 
 # 取候选 pod：awk 取列 + index 子串匹配 ns/pod 名（避免旧版 grep 误命中 NODE/IP）
 if [ "$ALL" -eq 1 ]; then

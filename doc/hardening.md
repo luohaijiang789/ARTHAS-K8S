@@ -46,8 +46,8 @@ probe 综合 6 项给出三类建议：
 脚本统一归一为两类目录名：
 
 ```
-amd64 / x86_64  →  x64       （选 tools/jdk/jdk-<v>-x64/）
-arm64 / aarch64 →  aarch64   （选 tools/jdk/jdk-<v>-aarch64/）
+amd64 / x86_64  →  x64       （选 jdk/jdk-<v>-x64/）
+arm64 / aarch64 →  aarch64   （选 jdk/jdk-<v>-aarch64/）
 ```
 
 两脚本选本地 JDK 时只认 `x64` / `aarch64` 这两个归一后的值，杜绝中间状态。

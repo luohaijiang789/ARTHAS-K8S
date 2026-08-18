@@ -5,7 +5,7 @@
 # 路径 A 的标记 /tmp/arthas-port-<pid> 也残留。本脚本读标记拿端口，attach 后
 # 非交互发 stop 命令（-c stop）卸载残留 agent + 删标记。
 #
-# 用法: bash tools/stop-arthas.sh <pod-flag>
+# 用法: bash stop-arthas.sh <pod-flag>
 #
 # 仅处理容器有 java 的 pod + 路径 A 标记（/tmp/arthas-port-<pid>）。
 # 路径 C 的标记在 /proc/<pid>/root/tmp/（目标容器 rootFS），本脚本清不到——
@@ -13,9 +13,9 @@
 # 后手动 stop，或 kubectl delete pod 重启。
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ARTHAS_DIST_DIR="$ROOT/tools/arthas/dist"
-ARTHAS_TAR="$ROOT/tools/cache/arthas-dist.tar.gz"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+ARTHAS_DIST_DIR="$ROOT/arthas/dist"
+ARTHAS_TAR="$ROOT/cache/arthas-dist.tar.gz"
 
 log_error() { printf "\033[31m %s \033[0m\n" "$1"; }
 log_info()  { printf "\033[34m %s \033[0m\n" "$1"; }
@@ -23,9 +23,9 @@ log_warn()  { printf "\033[33m %s \033[0m\n" "$1"; }
 
 command -v kubectl >/dev/null || { log_error "kubectl not found"; exit 1; }
 command -v tar    >/dev/null || { log_error "tar not found"; exit 1; }
-[ -d "$ARTHAS_DIST_DIR" ] || { log_error "arthas dist missing, run: bash tools/fetch.sh"; exit 1; }
+[ -d "$ARTHAS_DIST_DIR" ] || { log_error "arthas dist missing, run: bash fetch.sh"; exit 1; }
 
-[ -z "${1:-}" ] && { echo 'usage: bash tools/stop-arthas.sh <pod-flag>'; exit 1; }
+[ -z "${1:-}" ] && { echo 'usage: bash stop-arthas.sh <pod-flag>'; exit 1; }
 FLAG="$1"
 
 # 选 pod（awk 取列 + index 子串匹配 ns/pod 名）
@@ -63,13 +63,13 @@ fi
 
 if [ -z "$container_java" ]; then
   log_error "容器无 java（distroless/JRE-only），本脚本仅处理路径 A 标记，清不了路径 C"
-  log_warn "路径 C 残留清理：bash tools/attach-ephemeral.sh '$FLAG' 重新 attach 后输入 stop；或 kubectl delete pod -n $ns $podname 重建"
+  log_warn "路径 C 残留清理：bash attach-ephemeral.sh '$FLAG' 重新 attach 后输入 stop；或 kubectl delete pod -n $ns $podname 重建"
   exit 1
 fi
 
 # 传 arthas dist（stop 需要 arthas-boot.jar）
 if [ ! -f "$ARTHAS_TAR" ] || [ -n "$(find "$ARTHAS_DIST_DIR" -newer "$ARTHAS_TAR" 2>/dev/null | head -1)" ]; then
-  tar -czf "$ARTHAS_TAR" -C "$ROOT/tools/arthas" dist
+  tar -czf "$ARTHAS_TAR" -C "$ROOT/arthas" dist
 fi
 kubectl cp "$ARTHAS_TAR" -n "$ns" "$podname:/tmp/arthas-dist.tar.gz" 2>/dev/null
 kubectl exec -n "$ns" "$podname" -- tar -zxf /tmp/arthas-dist.tar.gz -C /tmp/ 2>/dev/null

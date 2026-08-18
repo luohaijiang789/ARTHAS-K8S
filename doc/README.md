@@ -24,8 +24,8 @@
 
 | 文档 | 对应代码 |
 |---|---|
-| [脚本详解](scripts.md) | `tools/fetch.sh` `tools/probe-k8s.sh` `tools/attach-k8s.sh` `tools/attach-ephemeral.sh` `tools/stop-arthas.sh` |
+| [脚本详解](scripts.md) | `fetch.sh` `probe-k8s.sh` `attach-k8s.sh` `attach-ephemeral.sh` `stop-arthas.sh` |
 | [加固场景处理](hardening.md) | 两 attach 脚本的架构判定 + 版本探测段；probe 的 6 项探测 |
 | [Arthas 实战](arthas-commands.md) | 不对应代码，是 arthas 控制台内的命令用法 |
-| [多人协作与退出清理](multi-user.md) | `tools/stop-arthas.sh` + 两 attach 脚本的端口透传/stop 提示 |
+| [多人协作与退出清理](multi-user.md) | `stop-arthas.sh` + 两 attach 脚本的端口透传/stop 提示 |
 | [排查手册](troubleshooting.md) | 跨所有脚本的症状 |

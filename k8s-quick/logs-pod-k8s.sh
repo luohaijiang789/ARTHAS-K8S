@@ -8,14 +8,14 @@
 #   --tail N  只看最后 N 行（默认全程跟随）
 #
 # 用法:
-#   bash tools/k8s-quick/logs-pod-k8s.sh <pod-flag>            # 单 pod 跟随
-#   bash tools/k8s-quick/logs-pod-k8s.sh <pod-flag> --all      # 所有匹配 pod 同时 tail
-#   bash tools/k8s-quick/logs-pod-k8s.sh <pod-flag> --prev     # 上次崩溃日志
-#   bash tools/k8s-quick/logs-pod-k8s.sh <pod-flag> --tail 100 -c app
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag>            # 单 pod 跟随
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --all      # 所有匹配 pod 同时 tail
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --prev     # 上次崩溃日志
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --tail 100 -c app
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash tools/k8s-quick/logs-pod-k8s.sh <pod-flag> [--all] [--prev] [--tail N] [--no-follow] [-c <container>]"
+USAGE="bash k8s-quick/logs-pod-k8s.sh <pod-flag> [--all] [--prev] [--tail N] [--no-follow] [-c <container>]"
 
 FLAG=""; ALL=0; PREV=0; TAIL=""; NOFOLLOW=0; FORCE_C=""
 while [ $# -gt 0 ]; do

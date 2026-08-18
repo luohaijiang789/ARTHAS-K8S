@@ -8,18 +8,18 @@
 # JDK + arthas dist 传进去跑。process namespace 共享后能看到目标 java 进程并 attach。
 #
 # 用法:
-#   bash tools/attach-ephemeral.sh <pod-flag>
-#   bash tools/attach-ephemeral.sh <pod-flag> --image=debian:bookworm-slim  # 须 glibc 系（默认即此）
-#   bash tools/attach-ephemeral.sh <pod-flag> --jdk=17              # 强制 JDK 版本，跳过自动探测
-#   bash tools/attach-ephemeral.sh <pod-flag> --container=sidecar   # 多容器 pod 指定目标容器
+#   bash attach-ephemeral.sh <pod-flag>
+#   bash attach-ephemeral.sh <pod-flag> --image=debian:bookworm-slim  # 须 glibc 系（默认即此）
+#   bash attach-ephemeral.sh <pod-flag> --jdk=17              # 强制 JDK 版本，跳过自动探测
+#   bash attach-ephemeral.sh <pod-flag> --container=sidecar   # 多容器 pod 指定目标容器
 #
-# 依赖: kubectl、tar、本机 tools/jdk（bash tools/fetch.sh 装好）、K8s >=1.25
+# 依赖: kubectl、tar、本机 jdk（bash fetch.sh 装好）、K8s >=1.25
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JDK_DIR="$ROOT/tools/jdk"
-ARTHAS_DIST_DIR="$ROOT/tools/arthas/dist"
-ARTHAS_DIST_TAR="$ROOT/tools/cache/arthas-dist.tar.gz"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+JDK_DIR="$ROOT/jdk"
+ARTHAS_DIST_DIR="$ROOT/arthas/dist"
+ARTHAS_DIST_TAR="$ROOT/cache/arthas-dist.tar.gz"
 
 # 临时容器基础镜像：必须是 glibc 系（Temurin/OpenJDK 是 glibc 链接的）。
 #   busybox(scratch 无 libc) / alpine(musl) 都跑不了 → "libdl.so.2 not found"。
@@ -32,8 +32,8 @@ log_error() { printf "\033[31m%s\033[0m\n" "$*"; }
 
 command -v kubectl >/dev/null || { log_error "kubectl not found"; exit 1; }
 command -v tar    >/dev/null || { log_error "tar not found"; exit 1; }
-[ -d "$JDK_DIR" ]         || { log_error "tools/jdk missing, run: bash tools/fetch.sh"; exit 1; }
-[ -d "$ARTHAS_DIST_DIR" ] || { log_error "arthas dist missing, run: bash tools/fetch.sh"; exit 1; }
+[ -d "$JDK_DIR" ]         || { log_error "jdk missing, run: bash fetch.sh"; exit 1; }
+[ -d "$ARTHAS_DIST_DIR" ] || { log_error "arthas dist missing, run: bash fetch.sh"; exit 1; }
 
 # ---- 源比 tar 新则重新打包（fetch 升级后不会复用旧 tar）----
 repack_if_stale() {  # tar  srcdir  inner_path
@@ -56,7 +56,7 @@ for a in "$@"; do
     *) FLAG="$a" ;;
   esac
 done
-[ -z "$FLAG" ] && { echo 'usage: bash tools/attach-ephemeral.sh [--image=IMG] [--jdk=8|11|17|21] [--container=NAME] <pod-flag>'; exit 1; }
+[ -z "$FLAG" ] && { echo 'usage: bash attach-ephemeral.sh [--image=IMG] [--jdk=8|11|17|21] [--container=NAME] <pod-flag>'; exit 1; }
 if [ -n "$FORCE_JDK" ]; then
   case "$FORCE_JDK" in 8|11|17|21) ;; *) log_error "--jdk 仅支持 8/11/17/21"; exit 1;; esac
 fi
@@ -92,7 +92,7 @@ log_info "target container: $target_container（process namespace 共享源）"
 # 故 ephemeral 容器无法原地清除——只能 kubectl delete pod 重建。
 # agent 在目标 JVM（不在 ephemeral），ephemeral 销毁≠agent 清理：
 #   - 退出 arthas 控制台前输 stop → 卸载 agent（推荐）
-#   - 忘了 stop：bash tools/stop-arthas.sh（路径 A 标记）或 kubectl delete pod 重建
+#   - 忘了 stop：bash stop-arthas.sh（路径 A 标记）或 kubectl delete pod 重建
 # 这里只在会话异常退出时提示，不做无效 patch。
 EPHE_CREATED=0
 cleanup_ephe() {
@@ -232,7 +232,7 @@ fi
 
 # 校验本地有对应版本+架构 JDK（移到选定版本后，修旧版只校验 jdk-17 的错位）
 if [ ! -d "$JDK_DIR/jdk-${use_jdk}-${arch}" ]; then
-  log_error "本地缺少 jdk-${use_jdk}-${arch}，请重跑 bash tools/fetch.sh 下双架构 JDK"
+  log_error "本地缺少 jdk-${use_jdk}-${arch}，请重跑 bash fetch.sh 下双架构 JDK"
   exit 1
 fi
 
@@ -243,7 +243,7 @@ log_info "cp arthas dist -> ephemeral..."
 kubectl cp "$ARTHAS_DIST_TAR" -n "$ns" "$pod:/tmp/arthas-dist.tar.gz" -c "$EPHE_ACTUAL"
 
 # ---- 传匹配架构+版本的 JDK ----
-JDK_TAR="$ROOT/tools/cache/jdk-${use_jdk}-${arch}.tar.gz"
+JDK_TAR="$ROOT/cache/jdk-${use_jdk}-${arch}.tar.gz"
 repack_if_stale "$JDK_TAR" "$JDK_DIR/jdk-${use_jdk}-${arch}" "jdk-${use_jdk}-${arch}"
 log_info "cp jdk-$use_jdk-$arch -> ephemeral..."
 kubectl cp "$JDK_TAR" -n "$ns" "$pod:/tmp/jdk.tar.gz" -c "$EPHE_ACTUAL"
@@ -295,4 +295,4 @@ kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c \
   "[ -f /proc/$TARGET_PID/root$PORT_FILE ] || echo $PORT > /proc/$TARGET_PID/root$PORT_FILE" 2>/dev/null || true
 
 log_info "arthas session ended."
-log_warn "彻底清理 agent + 标记：bash tools/stop-arthas.sh '$FLAG'（释放增强、删标记文件）"
+log_warn "彻底清理 agent + 标记：bash stop-arthas.sh '$FLAG'（释放增强、删标记文件）"

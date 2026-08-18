@@ -44,7 +44,7 @@
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `kubectl not found` / `arthas dist missing` | 缺依赖或没装底座 | 装依赖 / 跑 `bash tools/fetch.sh` |
+| `kubectl not found` / `arthas dist missing` | 缺依赖或没装底座 | 装依赖 / 跑 `bash fetch.sh` |
 | `no running pod matched` | flag 无 Running pod 命中 | 同 probe |
 | `exec: bash: not found` | 容器无 bash（alpine/busybox） | 脚本已用 `sh -c`；若仍报说明容器连 sh 都没有（distroless），走路径 C |
 | `arch=<X> 未识别，按 x64 处理` | `uname -m` 返回非标准值 | 确认节点真实架构；aarch64 节点被误判 x64 会 attach 失败，用路径 C（节点 label 更可靠） |
@@ -62,7 +62,7 @@
 |---|---|---|
 | `ephemeral 容器未创建` | 准入禁 ephemeral 或镜像拉取失败 | probe 第 6 项应提前发现；检查准入策略、基础镜像节点可达性 |
 | ephemeral 创建即退出 | `sleep` 缺失或镜像问题 | 默认 debian:bookworm-slim 有 sleep；若自定义 `--image=` 须含 sleep + glibc |
-| `本地缺少 jdk-<v>-<arch>` | fetch 没下对应架构/版本 | 重跑 `bash tools/fetch.sh` 下双架构 8 个 JDK |
+| `本地缺少 jdk-<v>-<arch>` | fetch 没下对应架构/版本 | 重跑 `bash fetch.sh` 下双架构 8 个 JDK |
 | cp 到 ephemeral 失败 | 容器未 Running 或 dest 写法错 | 脚本用 `pod:/tmp/file -c <ephem>` 写法（旧版 `pod:ephem:/tmp` 错误已修）；确认容器 Running |
 | `libdl.so.2 not found` / `java 启动即 127` | 基础镜像无 glibc | `--image=` 用了 busybox(scratch) 或 alpine(musl)；须 glibc 系（debian/ubuntu/temurin 基） |
 | 版本探测全失败→默认 17 | jlink + 无可读 jar + bin 跑不起来 | 默认 17 是安全网，目标若非 17 会 attach 失败；用 `--jdk=` 强制 |
@@ -88,7 +88,7 @@
 
 | 现象 | 处理 |
 |---|---|
-| 不确定该走哪条路径 | 先 `bash tools/probe-k8s.sh <flag>` 摸底 |
+| 不确定该走哪条路径 | 先 `bash probe-k8s.sh <flag>` 摸底 |
 | kubectl 连不上集群 | `kubectl config current-context` 确认上下文；`~/.kube/config` 权限 |
-| 底座版本对不上 | `cat tools/MANIFEST.txt` 对照；重跑 `fetch.sh` |
+| 底座版本对不上 | `cat MANIFEST.txt` 对照；重跑 `fetch.sh` |
 | 权限被拒（非 attach 相关） | 确认 kubeconfig 对应账号有 exec/debug/patch 权限 |

@@ -5,13 +5,13 @@
 # 之后裸 kubectl 命令默认用该 ns，省得每次 -n。比 alias 更稳（跨终端生效）。
 #
 # 用法:
-#   bash tools/k8s-quick/ns-k8s.sh                 # 列所有 ns
-#   bash tools/k8s-quick/ns-k8s.sh <ns>            # 切换当前 ns
-#   bash tools/k8s-quick/ns-k8s.sh <关键字>        # 模糊匹配切（如 kube 取 kube-system）
+#   bash k8s-quick/ns-k8s.sh                 # 列所有 ns
+#   bash k8s-quick/ns-k8s.sh <ns>            # 切换当前 ns
+#   bash k8s-quick/ns-k8s.sh <关键字>        # 模糊匹配切（如 kube 取 kube-system）
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash tools/k8s-quick/ns-k8s.sh [<ns|关键字>]"
+USAGE="bash k8s-quick/ns-k8s.sh [<ns|关键字>]"
 
 FLAG="${1:-}"
 

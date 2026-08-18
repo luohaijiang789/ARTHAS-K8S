@@ -1,8 +1,8 @@
-# === 工具底座（由 tools/fetch.sh 重建，不入 git，约 3.7G）===
-# clone 后跑 `bash tools/fetch.sh` 即可恢复 jdk/arthas/cache
-tools/jdk/
-tools/arthas/
-tools/cache/
+# === 工具底座（由 fetch.sh 重建，不入 git，约 3.7G）===
+# clone 后跑 `bash fetch.sh` 即可恢复 jdk/arthas/cache
+jdk/
+arthas/
+cache/
 
 # === 编辑器 / 系统临时 ===
 *.swp

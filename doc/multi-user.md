@@ -104,9 +104,9 @@ stop 清理：
 
 ```bash
 # 用户 A
-bash tools/attach-ephemeral.sh order-service      # 随机端口起 agent
+bash attach-ephemeral.sh order-service      # 随机端口起 agent
 # 用户 B
-bash tools/attach-ephemeral.sh payment-service    # 不同 pod，独立 agent
+bash attach-ephemeral.sh payment-service    # 不同 pod，独立 agent
 ```
 
 不同 pod = 不同 JVM = 不同 agent，完全隔离。各自随机端口，互不干扰。
@@ -115,11 +115,11 @@ bash tools/attach-ephemeral.sh payment-service    # 不同 pod，独立 agent
 
 ```bash
 # 用户 A 先 attach
-bash tools/attach-ephemeral.sh order-service
+bash attach-ephemeral.sh order-service
 # A 进 arthas 控制台（脚本选了随机端口，写了标记）
 
 # 用户 B 也跑同一条命令（不用问 A 任何信息）
-bash tools/attach-ephemeral.sh order-service
+bash attach-ephemeral.sh order-service
 # B 的脚本读标记文件 → 用 A 的端口 attach → arthas 复用 A 的 agent → B 得独立 session
 ```
 
@@ -137,13 +137,13 @@ bash tools/attach-ephemeral.sh order-service
 | Ctrl+C | 退 arthas-boot | 通常保留 | 保留 | 复用 |
 
 - **临时退出、待会还回来**：`quit`（agent 和标记都在，下次复用，增强延续）
-- **彻底结束、要干净**：`stop`（卸载 agent，释放增强）；或 `bash tools/stop-arthas.sh <pod>`（非交互 stop + 删标记）
-- **agent 状态异常想重置**：`bash tools/stop-arthas.sh <pod>`
+- **彻底结束、要干净**：`stop`（卸载 agent，释放增强）；或 `bash stop-arthas.sh <pod>`（非交互 stop + 删标记）
+- **agent 状态异常想重置**：`bash stop-arthas.sh <pod>`
 
 ## stop-arthas.sh：清理残留 agent + 标记
 
 ```bash
-bash tools/stop-arthas.sh order-service
+bash stop-arthas.sh order-service
 ```
 
 流程：读标记文件拿端口 → `--telnet-port=$PORT -c stop <pid>` 非交互卸载 → 删标记文件。适用：
@@ -166,5 +166,5 @@ bash tools/stop-arthas.sh order-service
 - [ ] 各跑 attach 脚本即可，脚本自动随机端口 + 自动复用，不用问别人
 - [ ] 临时退出用 `quit`（回来复用），彻底结束用 `stop`（释放增强）
 - [ ] 做过 redefine/watch/trace 后，结束前 `stop` 释放增强
-- [ ] agent 状态异常/想重置：`bash tools/stop-arthas.sh <pod>`（stop + 删标记）
+- [ ] agent 状态异常/想重置：`bash stop-arthas.sh <pod>`（stop + 删标记）
 - [ ] 连不上（标记端口失效）：`stop-arthas.sh` 清理后重 attach

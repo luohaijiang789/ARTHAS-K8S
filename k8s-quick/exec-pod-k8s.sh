@@ -5,13 +5,13 @@
 # 多容器 pod 默认 containers[0]，可用 -c 指定。
 #
 # 用法:
-#   bash tools/k8s-quick/exec-pod-k8s.sh              # 列所有 Running pod 选
-#   bash tools/k8s-quick/exec-pod-k8s.sh <pod-flag>   # 关键字匹配（服务名/app 标签片段）
-#   bash tools/k8s-quick/exec-pod-k8s.sh <pod-flag> -c <container>
+#   bash k8s-quick/exec-pod-k8s.sh              # 列所有 Running pod 选
+#   bash k8s-quick/exec-pod-k8s.sh <pod-flag>   # 关键字匹配（服务名/app 标签片段）
+#   bash k8s-quick/exec-pod-k8s.sh <pod-flag> -c <container>
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash tools/k8s-quick/exec-pod-k8s.sh [<pod-flag>] [-c <container>]"
+USAGE="bash k8s-quick/exec-pod-k8s.sh [<pod-flag>] [-c <container>]"
 
 FLAG=""; FORCE_C=""
 while [ $# -gt 0 ]; do
@@ -42,8 +42,8 @@ n=$(kubectl get pod -n "$ns" "$pod" -o jsonpath='{.spec.containers | length}' 2>
 shell=$(kubectl exec -n "$ns" "$pod" -c "$c" -- sh -c 'command -v bash || command -v sh || command -v ash' 2>/dev/null | head -1)
 if [ -z "$shell" ]; then
   log_error "容器内无 shell（distroless？）—— exec 进不去"
-  log_warn "看日志: bash tools/k8s-quick/logs-pod-k8s.sh '$FLAG'"
-  log_warn "排查 java: bash tools/probe-k8s.sh '$FLAG'（arthas 路径 C 可 attach distroless）"
+  log_warn "看日志: bash k8s-quick/logs-pod-k8s.sh '$FLAG'"
+  log_warn "排查 java: bash probe-k8s.sh '$FLAG'（arthas 路径 C 可 attach distroless）"
   exit 1
 fi
 log_info "shell: $shell  （按 Ctrl+D 或 exit 退出）"

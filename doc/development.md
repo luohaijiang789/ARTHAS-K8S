@@ -76,7 +76,7 @@ probe --csv <flag> → 清单按 path 分类
 一个 `batch-verify.sh` + `playbooks/` 目录：
 
 ```
-tools/
+根目录/
 ├── batch-verify.sh          # probe 清单 → 按 path 批量 attach → 跑 playbook → 归档
 └── playbooks/
     ├── sqli.as              # sc/jad 找 DAO → watch execute sink

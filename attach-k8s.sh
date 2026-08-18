@@ -3,19 +3,19 @@
 #
 # 适用：probe-k8s.sh 判定 exec-direct 的 pod（有 shell + JDK + 未禁 attach + rootFS 可写）。
 # 升级自旧版（arthas 3.6.9 + 单一 huaweijdk8u272）：
-#   - arthas 4.3.4（tools/arthas/dist，完整离线 jar）
+#   - arthas 4.3.4（arthas/dist，完整离线 jar）
 #   - 自动匹配目标 JVM 版本：优先用容器内 java 跑 arthas-boot（传输 ~17M，非 ~100M+）
 #   - 容器 java 不在 PATH 时，从 /proc/<pid>/cmdline 找 java 二进制路径
 #   - fallback：容器无 java（JRE-only/java 不在 PATH）时传匹配版本+架构 JDK 进去跑
 #   - distroless（无 shell）→ 报错提示走路径 C ephemeral
 #   - 用 sh -c 探测（兼容 alpine/busybox 等无 bash 容器）；退出清理 /tmp 残留
 #
-# 用法: bash tools/attach-k8s.sh <pod-flag>
+# 用法: bash attach-k8s.sh <pod-flag>
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ARTHAS_DIST_DIR="$ROOT/tools/arthas/dist"
-ARTHAS_TAR="$ROOT/tools/cache/arthas-dist.tar.gz"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+ARTHAS_DIST_DIR="$ROOT/arthas/dist"
+ARTHAS_TAR="$ROOT/cache/arthas-dist.tar.gz"
 TMP_IN_POD="/tmp/arthas-dist.tar.gz"   # 容器内落点，退出时清理
 
 log_error() { printf "\033[31m %s \033[0m\n" "$1"; }
@@ -23,7 +23,7 @@ log_info()  { printf "\033[34m %s \033[0m\n" "$1"; }
 
 command -v kubectl >/dev/null || { log_error "kubectl not found in PATH"; exit 1; }
 command -v tar    >/dev/null || { log_error "tar not found"; exit 1; }
-[ -d "$ARTHAS_DIST_DIR" ] || { log_error "arthas dist missing, run: bash tools/fetch.sh"; exit 1; }
+[ -d "$ARTHAS_DIST_DIR" ] || { log_error "arthas dist missing, run: bash fetch.sh"; exit 1; }
 
 # 不强制 root：kubectl 靠 kubeconfig（普通用户 ~/.kube/config），sudo 反而丢失 KUBECONFIG
 # 连错集群。旧版强制 root 是历史遗留（旧脚本用 huaweijdk 需 root 挂载），现已无此需要。
@@ -80,7 +80,7 @@ fi
 # ---- 传输 arthas dist（源比 tar 新则重新打包，避免复用旧版本）----
 if [ ! -f "$ARTHAS_TAR" ] || [ -n "$(find "$ARTHAS_DIST_DIR" -newer "$ARTHAS_TAR" 2>/dev/null | head -1)" ]; then
   log_info "packing arthas-dist.tar.gz ..."
-  tar -czf "$ARTHAS_TAR" -C "$ROOT/tools/arthas" dist
+  tar -czf "$ARTHAS_TAR" -C "$ROOT/arthas" dist
 fi
 log_info "uploading arthas dist (~17M) -> $podname:$TMP_IN_POD"
 kubectl cp "$ARTHAS_TAR" -n "$ns" "$podname:$TMP_IN_POD"
@@ -138,10 +138,10 @@ else
     *"21."*|21)               jv=21 ;;
     *) log_warn "版本探测失败（tgt='$tv'），FALLBACK 默认 jdk-17；attach 失败请用路径 C 或 --jdk= 强制"; jv=17 ;;
   esac
-  JDK_TAR="$ROOT/tools/cache/jdk-${jv}-${arch}.tar.gz"
-  if [ ! -f "$JDK_TAR" ] || [ -n "$(find "$ROOT/tools/jdk/jdk-${jv}-${arch}" -newer "$JDK_TAR" 2>/dev/null | head -1)" ]; then
+  JDK_TAR="$ROOT/cache/jdk-${jv}-${arch}.tar.gz"
+  if [ ! -f "$JDK_TAR" ] || [ -n "$(find "$ROOT/jdk/jdk-${jv}-${arch}" -newer "$JDK_TAR" 2>/dev/null | head -1)" ]; then
     log_info "packing jdk-$jv-$arch.tar.gz ..."
-    tar -czf "$JDK_TAR" -C "$ROOT/tools/jdk" "jdk-${jv}-${arch}"
+    tar -czf "$JDK_TAR" -C "$ROOT/jdk" "jdk-${jv}-${arch}"
   fi
   log_info "cp jdk-$jv-$arch -> pod (fallback)"
   kubectl cp "$JDK_TAR" -n "$ns" "$podname:/tmp/jdk-fallback.tar.gz"
@@ -191,4 +191,4 @@ if [ -z "$(kubectl exec -n "$ns" "$podname" -- sh -c "cat $PORT_FILE 2>/dev/null
 fi
 
 log_info "arthas session ended."
-log_warn "彻底清理 agent + 标记：bash tools/stop-arthas.sh '$FLAG'（释放增强、删标记文件）"
+log_warn "彻底清理 agent + 标记：bash stop-arthas.sh '$FLAG'（释放增强、删标记文件）"

@@ -4,12 +4,12 @@
 # 选 pod → kubectl describe pod，快速看 Events、探针、挂载、QoS、node 等。
 #
 # 用法:
-#   bash tools/k8s-quick/describe-pod-k8s.sh <pod-flag>
-#   bash tools/k8s-quick/describe-pod-k8s.sh              # 列所有选
+#   bash k8s-quick/describe-pod-k8s.sh <pod-flag>
+#   bash k8s-quick/describe-pod-k8s.sh              # 列所有选
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash tools/k8s-quick/describe-pod-k8s.sh [<pod-flag>]"
+USAGE="bash k8s-quick/describe-pod-k8s.sh [<pod-flag>]"
 
 FLAG="${1:-}"
 [ "${1:-}" = "-h" ] && { print_usage; exit 0; }

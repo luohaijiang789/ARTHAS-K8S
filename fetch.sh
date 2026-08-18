@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tools/fetch.sh — download Arthas + multi-version JDKs, verify sha256, extract, emit MANIFEST.
+# fetch.sh — download Arthas + multi-version JDKs, verify sha256, extract, emit MANIFEST.
 # Sources chosen for speed from this network:
 #   - Arthas dist zip: Aliyun maven mirror + maven central .sha256
 #   - arthas-boot.jar: arthas.aliyun.com CDN（与 dist/arthas-boot.jar 交叉校验）
@@ -7,12 +7,12 @@
 # Idempotent: re-run to refresh / verify existing downloads.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JDK_DIR="$ROOT/tools/jdk"
-ARTHAS_DIR="$ROOT/tools/arthas"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+JDK_DIR="$ROOT/jdk"
+ARTHAS_DIR="$ROOT/arthas"
 DIST_DIR="$ARTHAS_DIR/dist"
-CACHE="$ROOT/tools/cache"
-MANIFEST="$ROOT/tools/MANIFEST.txt"
+CACHE="$ROOT/cache"
+MANIFEST="$ROOT/MANIFEST.txt"
 mkdir -p "$JDK_DIR" "$DIST_DIR" "$CACHE"
 
 # ---- 依赖检查（旧版无检查，缺失时报原始错不友好）----
@@ -89,7 +89,7 @@ fi
 ZIP_SHA="${AR_SHA:-N/A}"
 rm -rf "$DIST_DIR"; mkdir -p "$DIST_DIR"
 unzip -q -o "$CACHE/arthas-bin.zip" -d "$DIST_DIR"
-echo "  extracted -> tools/arthas/dist/  sha=$ZIP_SHA"
+echo "  extracted -> arthas/dist/  sha=$ZIP_SHA"
 
 echo "[2/10] arthas-boot.jar (CDN entry，与 dist/arthas-boot.jar 交叉校验)"
 # #11：旧版只算 sha 写 MANIFEST、从不比对。CDN 不提供 .sha256，maven central 的

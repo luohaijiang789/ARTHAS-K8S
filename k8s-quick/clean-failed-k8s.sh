@@ -6,14 +6,14 @@
 # 删前列出要删的，确认后才删（--yes 跳过确认）。
 #
 # 用法:
-#   bash tools/k8s-quick/clean-failed-k8s.sh                 # 清 Failed + Evicted（确认）
-#   bash tools/k8s-quick/clean-failed-k8s.sh <ns>            # 指定 ns
-#   bash tools/k8s-quick/clean-failed-k8s.sh --yes           # 跳过确认
-#   bash tools/k8s-quick/clean-failed-k8s.sh --dry-run       # 只看不删
+#   bash k8s-quick/clean-failed-k8s.sh                 # 清 Failed + Evicted（确认）
+#   bash k8s-quick/clean-failed-k8s.sh <ns>            # 指定 ns
+#   bash k8s-quick/clean-failed-k8s.sh --yes           # 跳过确认
+#   bash k8s-quick/clean-failed-k8s.sh --dry-run       # 只看不删
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash tools/k8s-quick/clean-failed-k8s.sh [<ns>] [--yes] [--dry-run]"
+USAGE="bash k8s-quick/clean-failed-k8s.sh [<ns>] [--yes] [--dry-run]"
 
 NS=""; YES=0; DRY=0
 while [ $# -gt 0 ]; do

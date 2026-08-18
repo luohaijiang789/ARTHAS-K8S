@@ -5,13 +5,13 @@
 # Pending 黄），底部汇总各状态计数。快速扫「哪些 pod 不健康」。
 #
 # 用法:
-#   bash tools/k8s-quick/status-k8s.sh              # 全 ns
-#   bash tools/k8s-quick/status-k8s.sh <ns>         # 指定 ns
-#   bash tools/k8s-quick/status-k8s.sh <ns> --wide  # 含 IP/NODE（-o wide）
+#   bash k8s-quick/status-k8s.sh              # 全 ns
+#   bash k8s-quick/status-k8s.sh <ns>         # 指定 ns
+#   bash k8s-quick/status-k8s.sh <ns> --wide  # 含 IP/NODE（-o wide）
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash tools/k8s-quick/status-k8s.sh [<ns>] [--wide]"
+USAGE="bash k8s-quick/status-k8s.sh [<ns>] [--wide]"
 
 NS=""; WIDE=0
 while [ $# -gt 0 ]; do

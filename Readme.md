@@ -50,16 +50,16 @@ git clone git@github.com:luohaijiang789/ARTHAS-K8S.git
 # 或 HTTPS（无需 SSH key）
 git clone https://github.com/luohaijiang789/ARTHAS-K8S.git
 cd ARTHAS-K8S
-bash tools/fetch.sh
+bash fetch.sh
 ```
 
 `fetch.sh` 幂等下载 arthas 4.3.4 + 8 个 JDK（4 版本 × 2 架构），全部 sha256 + ELF 架构双确认，解压生成 `MANIFEST.txt`。重跑只补缺失、可更新 patch 版本。
 
 **装完自检**：
 ```bash
-cat tools/MANIFEST.txt                                    # 10 行清单（arthas 2 + JDK 8）
-for v in 8 11 17 21; do tools/jdk/jdk-$v-x64/bin/java -version 2>&1 | head -1; done
-tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar   # 起本机 arthas 验证（路径 B）
+cat MANIFEST.txt                                    # 10 行清单（arthas 2 + JDK 8）
+for v in 8 11 17 21; do jdk/jdk-$v-x64/bin/java -version 2>&1 | head -1; done
+jdk/jdk-17-x64/bin/java -jar arthas/arthas-boot.jar   # 起本机 arthas 验证（路径 B）
 ```
 看到 arthas 横幅（自报 4.3.3，功能为 4.3.4）即底座就绪。
 
@@ -70,9 +70,9 @@ tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar   # 起本机 ar
 ### 2. 摸底加固情况（必做）
 
 ```bash
-bash tools/probe-k8s.sh <pod-flag>             # 摸底匹配的 Running pod
-bash tools/probe-k8s.sh <pod-flag> --all       # 含非 Running
-bash tools/probe-k8s.sh --csv <pod-flag>       # CSV 清单（百来个服务批量排序）
+bash probe-k8s.sh <pod-flag>             # 摸底匹配的 Running pod
+bash probe-k8s.sh <pod-flag> --all       # 含非 Running
+bash probe-k8s.sh --csv <pod-flag>       # CSV 清单（百来个服务批量排序）
 ```
 
 `<pod-flag>` 是定位 pod 的关键字（服务名 / app 标签片段），如 `order-service`。多 pod 命中列出选号。多容器 pod 仅探 `containers[0]`，sidecar 需 attach 时用 `--container=` 指定。
@@ -99,7 +99,7 @@ bash tools/probe-k8s.sh --csv <pod-flag>       # CSV 清单（百来个服务批
 #### 路径 A：kubectl exec 直接 attach（exec-direct 的 pod）
 
 ```bash
-bash tools/attach-k8s.sh <pod-flag>
+bash attach-k8s.sh <pod-flag>
 ```
 
 用容器自己的 java 跑 arthas-boot，传 17M dist。流程：选 pod → `uname -m` 识别架构 → 探测容器内 java（`command -v java`，不在 PATH 则从 `/proc/<pid>/cmdline` 找）→ `kubectl cp` 传 dist → 用容器 java 跑 boot。退出 `trap` 清理 `/tmp` 残留。
@@ -111,17 +111,17 @@ bash tools/attach-k8s.sh <pod-flag>
 
 不走 K8s，目标进程在本机或可直连（本机 x86-64）：
 ```bash
-tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar <pid>   # 用与目标同 major 版本的本地 x64 JDK
-tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar         # 不带 pid → 列出所有 Java 进程
+jdk/jdk-17-x64/bin/java -jar arthas/arthas-boot.jar <pid>   # 用与目标同 major 版本的本地 x64 JDK
+jdk/jdk-17-x64/bin/java -jar arthas/arthas-boot.jar         # 不带 pid → 列出所有 Java 进程
 ```
 
 #### 路径 C：kubectl debug 临时容器 attach（加固 pod 主力）
 
 ```bash
-bash tools/attach-ephemeral.sh <pod-flag>
-bash tools/attach-ephemeral.sh <pod-flag> --image=debian:bookworm-slim  # 指定基础镜像（默认即此；须 glibc 系，busybox/alpine 跑不了 JDK）
-bash tools/attach-ephemeral.sh <pod-flag> --jdk=17                # 强制 JDK 版本，跳过自动探测
-bash tools/attach-ephemeral.sh <pod-flag> --container=sidecar     # 多容器 pod 指定目标容器
+bash attach-ephemeral.sh <pod-flag>
+bash attach-ephemeral.sh <pod-flag> --image=debian:bookworm-slim  # 指定基础镜像（默认即此；须 glibc 系，busybox/alpine 跑不了 JDK）
+bash attach-ephemeral.sh <pod-flag> --jdk=17                # 强制 JDK 版本，跳过自动探测
+bash attach-ephemeral.sh <pod-flag> --container=sidecar     # 多容器 pod 指定目标容器
 ```
 
 `kubectl debug --profile=sysadmin` 起最小镜像临时容器，`--target` 共享目标 pod 的 process namespace，`kubectl cp` 把匹配版本+架构 JDK + dist 传进去跑 arthas。**不改目标 pod 正式字段**（ephemeralContainers 是临时字段）。⚠ 临时容器无法原地删除（K8s 不允许 patch `spec.ephemeralContainers`）——退出前请 `stop` 卸载 agent；彻底清残留 `kubectl delete pod` 重建。
@@ -146,7 +146,7 @@ thread -b                                  找阻塞线程 / 死锁
 
 > ⚠ **ognl / redefine / heapdump 是敏感操作**：能改运行时状态、触发真实逻辑、dump 含凭据的堆。仅在自有/测试环境用。建议先 `watch`/`trace` 观察确认可达，再决定是否 ognl 触发。
 
-> **多人协作**：脚本自动随机端口 + 标记文件自动复用，不用提前商量端口。各跑 attach 脚本即可——同 pod 复用同一 agent（各 session 独立，watch 输出私有），不同 pod 天然隔离。退出 `stop` 释放增强，或 `bash tools/stop-arthas.sh <pod>` 清理。详见 [doc/multi-user.md](doc/multi-user.md)。
+> **多人协作**：脚本自动随机端口 + 标记文件自动复用，不用提前商量端口。各跑 attach 脚本即可——同 pod 复用同一 agent（各 session 独立，watch 输出私有），不同 pod 天然隔离。退出 `stop` 释放增强，或 `bash stop-arthas.sh <pod>` 清理。详见 [doc/multi-user.md](doc/multi-user.md)。
 
 ---
 
@@ -156,25 +156,25 @@ thread -b                                  找阻塞线程 / 死锁
 ARTHAS-K8S/
 ├── Readme.md                             # 精炼门面
 ├── .gitignore                            # 排除 3.7G 底座 + 编辑器临时 + reports/
-├── doc/                                  # 深入文档（架构/脚本/加固/实战/排查/协作/扩展）
-│   ├── README.md                         # 文档索引 + 阅读路径
-│   ├── architecture.md                   # 架构与设计
-│   ├── scripts.md                        # 脚本内部机制详解
-│   ├── hardening.md                      # 加固场景处理（架构判定 + 三道版本探测）
-│   ├── arthas-commands.md                # Arthas 漏洞验证实战
-│   ├── troubleshooting.md                # 排查手册
-│   ├── multi-user.md                     # 多人协作与退出清理
-│   └── development.md                    # 扩展与路线图
-└── tools/
-    ├── fetch.sh                          # 幂等下载/校验/解压，生成 MANIFEST
-    ├── probe-k8s.sh                      # 摸底 pod 加固 6 项，判定 attach 路径
-    ├── attach-k8s.sh                     # 路径 A：kubectl exec（未加固 pod）
-    ├── attach-ephemeral.sh               # 路径 C：kubectl debug 临时容器（加固 pod 主力）
-    ├── stop-arthas.sh                    # 清理残留 agent（读标记端口 + -c stop + 删标记）
-    ├── MANIFEST.txt                      # 版本 + sha256 清单（fetch 自动生成，版本锚点）
-    ├── arthas/                           # [gitignore] arthas 4.3.4 boot.jar + dist/
-    ├── jdk/                              # [gitignore] 8 个 JDK：jdk-{8,11,17,21}-{x64,aarch64}
-    └── cache/                            # [gitignore] 原始下载包 + 按需生成的 cp 用 tar
+├── fetch.sh                              # 幂等下载/校验/解压，生成 MANIFEST
+├── probe-k8s.sh                          # 摸底 pod 加固 6 项，判定 attach 路径
+├── attach-k8s.sh                         # 路径 A：kubectl exec（未加固 pod）
+├── attach-ephemeral.sh                   # 路径 C：kubectl debug 临时容器（加固 pod 主力）
+├── stop-arthas.sh                        # 清理残留 agent（读标记端口 + -c stop + 删标记）
+├── MANIFEST.txt                          # 版本 + sha256 清单（fetch 自动生成，版本锚点）
+├── arthas/                               # [gitignore] arthas 4.3.4 boot.jar + dist/
+├── jdk/                                  # [gitignore] 8 个 JDK：jdk-{8,11,17,21}-{x64,aarch64}
+├── cache/                                # [gitignore] 原始下载包 + 按需生成的 cp 用 tar
+├── k8s-quick/                            # K8s 日常高频操作快捷脚本（进 pod/看日志/状态等，与 arthas 无关）
+└── doc/                                  # 深入文档（架构/脚本/加固/实战/排查/协作/扩展）
+    ├── README.md                         # 文档索引 + 阅读路径
+    ├── architecture.md                   # 架构与设计
+    ├── scripts.md                        # 脚本内部机制详解
+    ├── hardening.md                      # 加固场景处理（架构判定 + 三道版本探测）
+    ├── arthas-commands.md                # Arthas 漏洞验证实战
+    ├── troubleshooting.md                # 排查手册
+    ├── multi-user.md                     # 多人协作与退出清理
+    └── development.md                    # 扩展与路线图
 ```
 
 JDK 8 个（4 版本 × 2 架构）：
@@ -197,7 +197,7 @@ JDK 8 个（4 版本 × 2 架构）：
 
 > arthas boot 启动横幅自报 4.3.3——release tag 与 jar 内部版本标记不一致，功能为 4.3.4。
 
-完整 sha256 + ELF 架构确认见 [tools/MANIFEST.txt](tools/MANIFEST.txt)。MANIFEST 格式：`组件 版本/架构 ver sha256 文件名`，共 10 行。
+完整 sha256 + ELF 架构确认见 [MANIFEST.txt](MANIFEST.txt)。MANIFEST 格式：`组件 版本/架构 ver sha256 文件名`，共 10 行。
 
 **镜像策略**（为下载速度）：
 - arthas dist → 阿里云 maven，`.sha256` 走 maven central 校验
@@ -219,8 +219,8 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 
 规则：**用与目标 JVM 同 major 版本 + 同架构的 JDK 跑 arthas**。
 - 路径 A 主路径：用容器自己的 java，版本+架构天然满足
-- 路径 A fallback / 路径 C：从 `tools/jdk/jdk-<v>-<arch>/` 选，脚本自动选版本与架构
-- 路径 B（本机）：从 `tools/jdk/jdk-<v>-x64/` 选
+- 路径 A fallback / 路径 C：从 `jdk/jdk-<v>-<arch>/` 选，脚本自动选版本与架构
+- 路径 B（本机）：从 `jdk/jdk-<v>-x64/` 选
 
 ---
 
