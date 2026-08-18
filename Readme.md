@@ -45,7 +45,10 @@
 ### 1. clone + 装底座
 
 ```bash
+# SSH（已配 GitHub SSH key）
 git clone git@github.com:luohaijiang789/ARTHAS-K8S.git
+# 或 HTTPS（无需 SSH key）
+git clone https://github.com/luohaijiang789/ARTHAS-K8S.git
 cd ARTHAS-K8S
 bash tools/fetch.sh
 ```
@@ -63,6 +66,8 @@ tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar   # 起本机 ar
 **依赖**：`curl tar unzip jq sha256sum readelf`（启动时自检，缺失即报具体名）。K8s attach 另需 `kubectl` 且能访问目标集群。
 
 > 底座约 **3.7G**，不入 git（见[目录结构](#目录结构)）。clone 后 `fetch.sh` 重建。
+
+> 🧪 **没有自有 K8s 集群？** 仓库自带 `lab/` 测试环境：一个 kind 单节点集群 + 4 个 Spring Boot 靶机 pod（覆盖正常/distroless/JRE-only/只读 4 种加固形态），`kind`/`docker` 装好即可一键起，照本 Readme 跑通 probe + 路径 A/C 全流程。见 [`lab/README.md`](lab/README.md)。
 
 ### 2. 摸底加固情况（必做）
 
@@ -199,7 +204,7 @@ JDK 8 个（4 版本 × 2 架构）：
 **镜像策略**（为下载速度）：
 - arthas dist → 阿里云 maven，`.sha256` 走 maven central 校验
 - JDK → 清华 TUNA Adoptium 镜像，sha256 用官方 Adoptium API 校验（镜像内容与官方一致）
-- `fetch.sh` 内置官方源回退（清华失败回退 GitHub release）
+- `fetch.sh` 内置源回退：JDK 清华 TUNA 失败回退 Adoptium 官方链接（`api.adoptium.net` 返回的 `link`）；arthas sha 源失败降级用已缓存 zip（完整性 `unzip -t` 校验）
 
 **校验强度**：8 个 JDK 均 sha256 + ELF 架构双确认（`readelf Machine` 校验 aarch64）；arthas-boot.jar 与已校验 dist 内的同名 jar 字节比对；json 元数据缓存启动时校验有效性（防 API 限流/错误页缓存中毒）。
 

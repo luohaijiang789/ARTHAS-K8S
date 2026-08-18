@@ -4,9 +4,16 @@
 
 ## 前置
 
-- Docker（已装）
-- `kubectl` + `kind`（已在 `~/.local/bin`）
-- `tools/` 底座已 `fetch.sh` 装齐（arthas + 8 JDK）
+- **Docker**（起 kind 节点用）
+- **kubectl + kind**——没装的话，下到 `~/.local/bin`（无需 sudo，确保 `~/.local/bin` 在 PATH）：
+  ```bash
+  mkdir -p ~/.local/bin
+  curl -fsSL -o ~/.local/bin/kind https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64
+  curl -fsSL -o ~/.local/bin/kubectl https://dl.k8s.io/release/v1.31.0/bin/linux/amd64/kubectl
+  chmod +x ~/.local/bin/kind ~/.local/bin/kubectl
+  ```
+  或系统包：Debian/Ubuntu `sudo apt install -y kubectl kind`（Kali 同源）。
+- **`tools/` 底座**——仓库根跑 `bash tools/fetch.sh` 装齐（arthas + 8 JDK，约 3.7G）
 
 ## 靶机矩阵
 
