@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # stop-arthas.sh — 清理目标 pod 残留的 arthas agent
 #
-# arthas 异常退出（Ctrl+C / quit / ssh 断 / 路径 C 临时容器销毁但 agent 在目标 JVM）
-# 后，agent 可能残留在目标 JVM，占 3658 端口导致下次 attach 报 "port already in use"。
-# 本脚本 attach 后非交互发 stop 命令（-c stop）卸载残留 agent。
+# arthas 异常退出（Ctrl+C / quit / ssh 断）后，agent 残留在目标 JVM，
+# 路径 A 的标记 /tmp/arthas-port-<pid> 也残留。本脚本读标记拿端口，attach 后
+# 非交互发 stop 命令（-c stop）卸载残留 agent + 删标记。
 #
 # 用法: bash tools/stop-arthas.sh <pod-flag>
 #
-# 仅处理容器有 java 的 pod（路径 A 残留，最常见场景）。容器无 java（distroless /
-# JRE-only）的残留走 attach-ephemeral.sh attach 后手动 stop，或重启 pod。
+# 仅处理容器有 java 的 pod + 路径 A 标记（/tmp/arthas-port-<pid>）。
+# 路径 C 的标记在 /proc/<pid>/root/tmp/（目标容器 rootFS），本脚本清不到——
+# 路径 C 残留清理：用 attach-ephemeral.sh 重新 attach（读路径 C 标记复用 agent）
+# 后手动 stop，或 kubectl delete pod 重启。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -60,8 +62,8 @@ if [ -z "$container_java" ]; then
 fi
 
 if [ -z "$container_java" ]; then
-  log_error "容器无 java（distroless/JRE-only），本脚本（路径 A 风格）无法清理"
-  log_warn "请走: bash tools/attach-ephemeral.sh '$FLAG'  attach 后输入 stop；或 kubectl delete pod -n $ns $podname 重建"
+  log_error "容器无 java（distroless/JRE-only），本脚本仅处理路径 A 标记，清不了路径 C"
+  log_warn "路径 C 残留清理：bash tools/attach-ephemeral.sh '$FLAG' 重新 attach 后输入 stop；或 kubectl delete pod -n $ns $podname 重建"
   exit 1
 fi
 

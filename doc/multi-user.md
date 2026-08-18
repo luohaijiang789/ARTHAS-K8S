@@ -123,9 +123,11 @@ bash tools/stop-arthas.sh order-service
 流程：读标记文件拿端口 → `--telnet-port=$PORT -c stop <pid>` 非交互卸载 → 删标记文件。适用：
 - 做过 redefine/watch/trace 想干净释放增强
 - agent 状态异常想重置
-- 路径 C 的 ephemeral 销毁后清理目标 JVM 的 agent + 标记
+- 路径 A 的标记端口失效连不上时清理
 
-> ⚠ stop-arthas.sh 的 `-c stop` 对残留 agent 的清理有效性，依赖 arthas "attach 到已有 agent 的 JVM 会连上它"——已实测确认（同端口二次 attach 连到已有 agent 并成功 stop）。容器有 java 走路径 A 风格；无 java 提示走 attach-ephemeral 手动 stop 或重启 pod。
+> **边界**：stop-arthas.sh 只处理**容器有 java 的 pod + 路径 A 标记**（`/tmp/arthas-port-<pid>`）。**路径 C 的标记在 `/proc/<pid>/root/tmp/`（目标容器 rootFS），本脚本清不到**——路径 C 残留清理：用 `attach-ephemeral.sh` 重新 attach（它会读路径 C 标记、复用已有 agent），在 arthas 控制台手动 `stop`；或 `kubectl delete pod` 重启。distroless/JRE-only（容器无 java）同走这两条。
+
+> ⚠ stop-arthas.sh 的 `-c stop` 对残留 agent 的清理有效性，依赖 arthas "attach 到已有 agent 的 JVM 会连上它"——已实测确认（同端口二次 attach 连到已有 agent 并成功 stop）。
 
 ## 标记文件残留处理
 

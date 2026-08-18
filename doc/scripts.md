@@ -197,7 +197,7 @@ stop-arthas.sh 要读标记拿端口（agent 不在默认 3658），stop 后删�
 
 **删标记幂等**：agent 已不存在时 stop 会失败，但删标记仍执行（幂等，不报错）。
 
-**仅处理容器有 java 的 pod**（路径 A 风格）：distroless/JRE-only 走 `attach-ephemeral.sh` attach 后手动 stop，或重启 pod。
+**仅处理容器有 java 的 pod + 路径 A 标记**：读 `/tmp/arthas-port-<pid>`（容器内，路径 A 写的标记）。**路径 C 的标记写在 `/proc/<pid>/root/tmp/`（目标容器 rootFS），本脚本清不到**——路径 C 残留的清理：用 `attach-ephemeral.sh` 重新 attach（它会读路径 C 标记、复用 agent），然后在 arthas 控制台手动 `stop`；或 `kubectl delete pod` 重启。distroless/JRE-only（容器无 java）同样走这两条。
 
 **何时用**：做过 redefine/watch/trace 想干净释放；agent 状态异常想重置；标记端口失效连不上时清理。详见 [多人协作与退出清理](multi-user.md)。
 
