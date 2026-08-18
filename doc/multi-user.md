@@ -22,7 +22,7 @@
 
 ## 路径 C 真集群实测（2026-08-18，kind v1.31 + distroless pod）
 
-上面的端口/agent 行为是本地起 JVM 测的；路径 C（ephemeral 容器 attach distroless/JRE-only）的多用户在真集群首次验证。`lab/app-distroless`（无 shell，纯路径 C）上跑 A/B 两个用户，4 项断言全过：
+上面的端口/agent 行为是本地起 JVM 测的；路径 C（ephemeral 容器 attach distroless/JRE-only）的多用户在真集群首次验证。本地 kind 集群起的 distroless pod（无 shell，纯路径 C）上跑 A/B 两个用户，4 项断言全过：
 
 | 断言 | 结果 | 证据 |
 |---|---|---|

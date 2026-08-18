@@ -67,8 +67,6 @@ tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar   # 起本机 ar
 
 > 底座约 **3.7G**，不入 git（见[目录结构](#目录结构)）。clone 后 `fetch.sh` 重建。
 
-> 🧪 **没有自有 K8s 集群？** 仓库自带 `lab/` 测试环境：一个 kind 单节点集群 + 4 个 Spring Boot 靶机 pod（覆盖正常/distroless/JRE-only/只读 4 种加固形态），`kind`/`docker` 装好即可一键起，照本 Readme 跑通 probe + 路径 A/C 全流程。见 [`lab/README.md`](lab/README.md)。
-
 ### 2. 摸底加固情况（必做）
 
 ```bash
@@ -282,7 +280,7 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 - ✅ 路径 A：kubectl exec（容器 java + 三道版本探测 fallback）
 - ✅ 路径 C：kubectl debug 临时容器（零侵入、三道探测 + class major 兜底）
 - ✅ JDK 8/11/17/21 × x64/aarch64 全覆盖
-- ✅ 本地 kind 集群试跑（`lab/`）：probe 矩阵 4 形态全命中、路径 A/C 端到端跑通、修 3 个路径 C bug（cp dest 写法 / 默认镜像无 glibc / cleanup patch 死代码）
+- ✅ 本地 kind 集群试跑：probe 矩阵 4 形态全命中、路径 A/C 端到端跑通、修 3 个路径 C bug（cp dest 写法 / 默认镜像无 glibc / cleanup patch 死代码）
 
 **待做**：
 - [ ] 受限托管集群（GKE/EKS + PSP）试跑 `--profile=sysadmin` 可用性

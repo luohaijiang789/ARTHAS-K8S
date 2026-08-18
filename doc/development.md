@@ -139,7 +139,7 @@ tools/
 
 ### 本地已验证（kind v1.31 + 标准矩阵）
 
-`lab/` 测试集群已验证（2026-08-18）：
+本地 kind 集群验证（2026-08-18）：
 
 - ✅ probe 6 项准确性：4 种加固形态（normal/distroless/jre/readonly）全部命中预期选路分支
 - ✅ attach-ephemeral `--profile=sysadmin`：kind 节点 privileged，4 pod 全 `ephemeral=yes`

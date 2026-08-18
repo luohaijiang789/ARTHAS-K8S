@@ -1,8 +1,0 @@
-# kind 单节点集群 — K8s v1.31（ephemeral 容器 GA 自 1.25，路径 C 前置满足）
-# kind 节点是 privileged 容器，kubectl debug --profile=sysadmin 可用（验证路径 C 主力）。
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-name: arthas-lab
-nodes:
-  - role: control-plane
-    image: kindest/node:v1.31.0
