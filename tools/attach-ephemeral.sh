@@ -9,7 +9,7 @@
 #
 # 用法:
 #   bash tools/attach-ephemeral.sh <pod-flag>
-#   bash tools/attach-ephemeral.sh <pod-flag> --image=busybox:1.36
+#   bash tools/attach-ephemeral.sh <pod-flag> --image=debian:bookworm-slim  # 须 glibc 系（默认即此）
 #   bash tools/attach-ephemeral.sh <pod-flag> --jdk=17              # 强制 JDK 版本，跳过自动探测
 #   bash tools/attach-ephemeral.sh <pod-flag> --container=sidecar   # 多容器 pod 指定目标容器
 #
@@ -21,7 +21,10 @@ JDK_DIR="$ROOT/tools/jdk"
 ARTHAS_DIST_DIR="$ROOT/tools/arthas/dist"
 ARTHAS_DIST_TAR="$ROOT/tools/cache/arthas-dist.tar.gz"
 
-BASE_IMAGE="busybox:1.36"
+# 临时容器基础镜像：必须是 glibc 系（Temurin/OpenJDK 是 glibc 链接的）。
+#   busybox(scratch 无 libc) / alpine(musl) 都跑不了 → "libdl.so.2 not found"。
+#   debian:bookworm-slim 实测可用；缺 unzip（第 2 道版本探测需要），下方探测前装。
+BASE_IMAGE="debian:bookworm-slim"
 
 log_info()  { printf "\033[34m%s\033[0m\n" "$*"; }
 log_warn()  { printf "\033[33m%s\033[0m\n" "$*"; }
@@ -84,21 +87,26 @@ fi
 [ -z "$target_container" ] && { log_error "无法获取目标容器名（多容器 pod 用 --container= 指定）"; exit 1; }
 log_info "target container: $target_container（process namespace 共享源）"
 
-# ---- 清理：移除本次创建的 ephemeral container ----
+# ---- 清理说明 ----
+# K8s 不允许 patch 删除 spec.ephemeralContainers（Forbidden，不在可变字段列表），
+# 故 ephemeral 容器无法原地清除——只能 kubectl delete pod 重建。
+# agent 在目标 JVM（不在 ephemeral），ephemeral 销毁≠agent 清理：
+#   - 退出 arthas 控制台前输 stop → 卸载 agent（推荐）
+#   - 忘了 stop：bash tools/stop-arthas.sh（路径 A 标记）或 kubectl delete pod 重建
+# 这里只在会话异常退出时提示，不做无效 patch。
 EPHE_CREATED=0
 cleanup_ephe() {
   [ "$EPHE_CREATED" = "1" ] || return
-  kubectl patch pod -n "$ns" "$pod" --type=json \
-    -p='[{"op":"remove","path":"/spec/ephemeralContainers"}]' 2>/dev/null && \
-  log_info "ephemeral container cleaned up" || \
-  log_warn "ephemeral 未自动清理，手动: kubectl patch pod -n $ns $pod --type=json -p='[{\"op\":\"remove\",\"path\":\"/spec/ephemeralContainers\"}]'"
+  log_warn "ephemeral 容器 $EPHE_ACTUAL 已保留（K8s 不支持原地删除 spec.ephemeralContainers）"
+  log_warn "彻底清理：kubectl delete pod -n $ns $pod（Deployment 自动重建）"
+  log_warn "若忘了 stop 卸载 agent：重跑本脚本 attach 后输 stop，或直接 delete pod"
 }
 trap cleanup_ephe EXIT
 
 # ---- 起临时容器（sleep 保活；--attach=false 便于随后 kubectl cp）----
 log_info "launching ephemeral container (image=$BASE_IMAGE, target=$target_container)..."
-# 旧版误写 `-- false "sleep 3600"`：false 是命令、忽略参数立即返回非0，容器瞬间退出。
-# 正确：sleep 是 busybox applet，3600 秒保活。
+# sleep 3600 保活（coreutils/busybox applet 都有 sleep）。
+# 注意 --image 必须是 glibc 系（debian/ubuntu/temurin 基），busybox/alpine 跑不了 Temurin JDK。
 kubectl debug -n "$ns" "$pod" \
   --image="$BASE_IMAGE" \
   --target="$target_container" \
@@ -106,17 +114,35 @@ kubectl debug -n "$ns" "$pod" \
   --attach=false \
   -- sleep 3600 2>&1 | head -20
 
-EPHE_ACTUAL=$(kubectl get pod -n "$ns" "$pod" -o jsonpath='{.spec.ephemeralContainers[0].name}' 2>/dev/null)
+# 取本次创建的 ephemeral 容器名：kubectl debug 追加到数组末尾，故取 [-1]。
+# （用 [0] 在有历史残留时会取错容器——K8s 不允许删 spec.ephemeralContainers，残留会累积。）
+# 短重试：debug 返回与 spec 同步间有窄窗口，刚返回时 [-1] 偶发取空。
+EPHE_ACTUAL=""
+for _ in 1 2 3 4 5; do
+  EPHE_ACTUAL=$(kubectl get pod -n "$ns" "$pod" -o jsonpath='{.spec.ephemeralContainers[-1].name}' 2>/dev/null)
+  [ -n "$EPHE_ACTUAL" ] && break
+  sleep 1
+done
 [ -z "$EPHE_ACTUAL" ] && { log_error "ephemeral 容器未创建（可能被准入拦截或镜像拉取失败）"; exit 1; }
 EPHE_CREATED=1
 log_info "ephemeral container name: $EPHE_ACTUAL"
 
-# 等 ephemeral 容器进入 Running（kubectl cp 需要）
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  [ -n "$(kubectl get pod -n "$ns" "$pod" -o \
-    jsonpath='{.status.ephemeralContainerStatuses[0].state.running}' 2>/dev/null)" ] && break
+# 等 ephemeral 容器进入 Running（kubectl cp 需要）。
+# 用 EPHE_ACTUAL 名字定位（pod 可能已有历史 ephemeral 残留，按索引 [0] 会取错容器）。
+for _ in 1 2 3 4 5 6 7 8 9 10 15 20 25 30; do
+  state=$(kubectl get pod -n "$ns" "$pod" -o \
+    jsonpath='{range .status.ephemeralContainerStatuses[*]}{.name}={.state.running}{","}{end}' 2>/dev/null)
+  echo "$state" | tr ',' '\n' | grep -q "^${EPHE_ACTUAL}=.*running" && break
   sleep 1
 done
+
+# 基镜像若是 debian:bookworm-slim（默认），缺 unzip（第 2 道版本探测需要），装上。
+# 幂等：已有 unzip 则跳过。约 1-2s。非 glibc 镜像（用户 --image=busybox/alpine）跳过——
+# 但那类镜像跑不了 glibc JDK，会在跑 arthas 时报 libdl.so.2 缺失。
+if ! kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c 'command -v unzip >/dev/null 2>&1' 2>/dev/null; then
+  kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c \
+    'apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq unzip >/dev/null 2>&1 || true' 2>/dev/null
+fi
 
 # ---- 探测目标架构（节点 arch label 最可靠，兜底 uname）----
 node=$(kubectl get pod -n "$ns" "$pod" -o jsonpath='{.spec.nodeName}' 2>/dev/null)
@@ -153,7 +179,7 @@ tgt_raw=$(kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c '
         # 探测 1：release 文件
         if [ -f "$rel" ]; then echo "REL:"; cat "$rel"; exit 0; fi
         # 探测 2：从 -jar/-cp 取目标 jar，unzip 首个 class 读 major version
-        #         busybox 1.36 含 unzip applet；-p 提取到 stdout 不落盘
+        #         默认 debian:bookworm-slim 探测前已装 unzip；-p 提取到 stdout 不落盘
         for a in $c; do
           case "$a" in
             *.jar)
@@ -211,14 +237,16 @@ if [ ! -d "$JDK_DIR/jdk-${use_jdk}-${arch}" ]; then
 fi
 
 # ---- 传 arthas dist ----
+# kubectl cp dest 写法："$pod:/tmp/<file>" -c "$EPHE_ACTUAL"
+#   错误写法 "$pod":"$EPHE_ACTUAL":/tmp/... 会被 kubectl 当成 pod=path（path 含冒号），cp 失败。
 log_info "cp arthas dist -> ephemeral..."
-kubectl cp "$ARTHAS_DIST_TAR" -n "$ns" "$pod":"$EPHE_ACTUAL":/tmp/arthas-dist.tar.gz -c "$EPHE_ACTUAL"
+kubectl cp "$ARTHAS_DIST_TAR" -n "$ns" "$pod:/tmp/arthas-dist.tar.gz" -c "$EPHE_ACTUAL"
 
 # ---- 传匹配架构+版本的 JDK ----
 JDK_TAR="$ROOT/tools/cache/jdk-${use_jdk}-${arch}.tar.gz"
 repack_if_stale "$JDK_TAR" "$JDK_DIR/jdk-${use_jdk}-${arch}" "jdk-${use_jdk}-${arch}"
 log_info "cp jdk-$use_jdk-$arch -> ephemeral..."
-kubectl cp "$JDK_TAR" -n "$ns" "$pod":"$EPHE_ACTUAL":/tmp/jdk.tar.gz -c "$EPHE_ACTUAL"
+kubectl cp "$JDK_TAR" -n "$ns" "$pod:/tmp/jdk.tar.gz" -c "$EPHE_ACTUAL"
 
 # ---- 在临时容器里解压 + 跑 arthas-boot attach 目标 pid ----
 # 多人协作：随机端口 + 标记文件自动复用（不用提前商量端口）

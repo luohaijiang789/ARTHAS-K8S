@@ -18,6 +18,10 @@ log_error() { printf "\033[31m%s\033[0m\n" "$*"; }
 command -v kubectl >/dev/null || { log_error "kubectl not found"; exit 1; }
 command -v jq     >/dev/null || { log_error "jq not found"; exit 1; }
 
+# 试探 ephemeral 用的镜像：须与 attach-ephemeral.sh 默认一致（glibc）。
+# busybox(scratch 无 libc)/alpine(musl) 跑不了 Temurin glibc JDK —— probe 说 yes 但 attach 跑不起来就割裂了。
+PROBE_DEBUG_IMAGE="debian:bookworm-slim"
+
 CSV=0; ALL=0; FLAG=""
 for a in "$@"; do
   case "$a" in
@@ -91,16 +95,20 @@ probe_one() {  # ns pod -> 6 探测结果（路径写入全局 PROBE_PATH）
   fi
 
   # 6) ephemeral 是否允许：试探性创建（带 --profile=sysadmin，与实战 attach-ephemeral 一致）
-  #    安全化：若 pod 已有 ephemeral 容器则跳过试探（旧版无脑 remove 整个数组会误删他人会话）
+  #    安全化：若 pod 已有 ephemeral 容器则跳过试探（已有说明 ephemeral 可用，且避免误伤他人会话）
+  #    注意：K8s 不允许 patch 删除 spec.ephemeralContainers（Forbidden，不在可变字段列表），
+  #          试探容器退出后 spec 字段残留但已 Completed，不影响后续 attach（脚本会新建临时容器）。
+  #          彻底清残留只能 kubectl delete pod 重建——故试探镜像选最小的，残留影响最小。
+  #          镜像与 attach-ephemeral.sh 默认一致（glibc，busybox/alpine 跑不了 Temurin JDK）。
   local pre_ephe
   pre_ephe=$(printf '%s' "$spec_json" | jq -r '.spec.ephemeralContainers // [] | length' 2>/dev/null)
   ephemeral_ok="unknown"
   if [ "$pre_ephe" != "0" ]; then
-    ephemeral_ok="skip(已有 $pre_ephe 个 ephemeral，未试探避免误伤)"
-  elif kubectl debug -n "$ns" "$pod" --image=busybox:1.36 --target="$mainc" --profile=sysadmin --attach=false -- sh -c 'true' 2>/dev/null; then
+    ephemeral_ok="yes(已有 $pre_ephe 个 ephemeral，未试探避免误伤)"
+  elif kubectl debug -n "$ns" "$pod" --image="$PROBE_DEBUG_IMAGE" --target="$mainc" --profile=sysadmin --attach=false -- sh -c 'true' 2>/dev/null; then
     ephemeral_ok="yes"
-    # pre_ephe=0 已保证数组原本为空，remove 整个数组只删本次试探产生的
-    kubectl patch pod -n "$ns" "$pod" --type=json -p='[{"op":"remove","path":"/spec/ephemeralContainers"}]' 2>/dev/null || true
+    # 试探容器已 Completed，但 spec.ephemeralContainers 字段残留（K8s 不允许 patch 删除）。
+    # 不影响后续 attach-ephemeral（它新建临时容器），彻底清需 kubectl delete pod。
   else
     ephemeral_ok="no(可能被 admission 禁)"
   fi

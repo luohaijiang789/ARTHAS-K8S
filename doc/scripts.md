@@ -133,12 +133,14 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 → 校验本地有对应版本+架构 JDK
 → cp arthas dist + cp 匹配 JDK 进临时容器
 → 临时容器内解压 + 找目标 pid（排除自己）+ exec arthas-boot <pid>
-→ 退出 trap 移除 spec.ephemeralContainers
+→ 退出 trap 提示清理（不原地 patch，K8s 不允许）
 ```
 
 ### 关键决策
 
-**`-- sleep 3600` 不用 `false "sleep 3600"`**：旧版误写 `-- false "sleep 3600"`——`false` 是命令、忽略参数、返回 1，容器启动即退出，不是 sleep 保活。改为 `-- sleep 3600`（busybox 有 sleep applet）。这个 bug 让路径 C 之前完全不可用。
+**`-- sleep 3600` 保活**：sleep 3600 让临时容器驻留以便 kubectl cp/exec。默认 `debian:bookworm-slim` 有 coreutils sleep。
+
+**基础镜像须 glibc 系**：Temurin/OpenJDK 是 glibc 链接的，busybox(scratch 无 libc)/alpine(musl) 跑不了 → `libdl.so.2 not found`。默认 `debian:bookworm-slim` 实测可用；缺 unzip，脚本探测前 `apt-get install -y unzip`（第 2 道版本探测需要）。
 
 **`--profile=sysadmin`**：授予读 /proc、ptrace 等，attach 必需。与 probe 试探一致（避免探测和实战判定不一致）。受限集群若禁 sysadmin，需放宽或换 nsenter。
 
@@ -165,7 +167,7 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 ### 退出清理
 
-`trap cleanup_ephe EXIT`：退出时 `kubectl patch pod --type=json -p='[{"op":"remove","path":"/spec/ephemeralContainers"}]'`。移除整个 ephemeralContainers 数组——因为本次会话产生的 ephemeral 退出后无意义，且 probe 已保证试探时数组原本为空（本次创建的就是全部）。patch 失败时打手动清理命令。
+`trap cleanup_ephe EXIT`：**不原地 patch**——K8s 不允许 patch 删 `spec.ephemeralContainers`（Forbidden，不在 pod 可变字段列表），原 patch 是死代码。退出时只打提示：彻底清 ephemeral 残留用 `kubectl delete pod` 重建（Deployment 自动拉起）。
 
 > **注意**：trap 清理的是 ephemeral 容器，不是目标 JVM 的 arthas agent。路径 C 的 agent 注入目标 JVM，ephemeral 销毁后 agent 仍在（标记文件也在目标 rootFS），下个用户 attach 自动复用。要干净释放用 `stop` 或 `stop-arthas.sh`。详见 [多人协作与退出清理](multi-user.md)。
 

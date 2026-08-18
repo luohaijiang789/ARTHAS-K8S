@@ -20,7 +20,7 @@
 "零侵入"在这里不只是技术洁癖，是安全考量：
 
 - **不常驻**：arthas agent 只在 attach 会话期间存在，退出即卸载。不长期 hook 生产 JVM、不持续插桩、无稳态性能开销
-- **不改目标 pod**：路径 C 用 ephemeral container，不修改 Pod spec 的正式字段（ephemeralContainers 是临时字段，退出即清）；不打入镜像、不注入 sidecar、不动 init
+- **不改目标 pod 正式字段**：路径 C 用 ephemeral container（`spec.ephemeralContainers` 临时字段），不打入镜像、不注入 sidecar、不动 init。⚠ 临时容器无法原地删除（K8s 不允许 patch `spec.ephemeralContainers`），退出后 spec 字段残留但容器已 Completed，彻底清需 `kubectl delete pod` 重建；agent 靠 `stop`/stop-arthas.sh 卸载
 - **影响面可控**：临时 attach 看完即走，最坏情况是 attach 期间的一次方法拦截开销，不会持续影响服务
 - **可审计**：一次会话就是一次取证，脚本日志 + arthas 命令历史本身就是审计记录
 

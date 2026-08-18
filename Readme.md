@@ -116,12 +116,12 @@ tools/jdk/jdk-17-x64/bin/java -jar tools/arthas/arthas-boot.jar         # 不带
 
 ```bash
 bash tools/attach-ephemeral.sh <pod-flag>
-bash tools/attach-ephemeral.sh <pod-flag> --image=alpine:3.20    # 指定基础镜像（默认 busybox:1.36）
+bash tools/attach-ephemeral.sh <pod-flag> --image=debian:bookworm-slim  # 指定基础镜像（默认即此；须 glibc 系，busybox/alpine 跑不了 JDK）
 bash tools/attach-ephemeral.sh <pod-flag> --jdk=17                # 强制 JDK 版本，跳过自动探测
 bash tools/attach-ephemeral.sh <pod-flag> --container=sidecar     # 多容器 pod 指定目标容器
 ```
 
-`kubectl debug --profile=sysadmin` 起最小镜像临时容器，`--target` 共享目标 pod 的 process namespace，`kubectl cp` 把匹配版本+架构 JDK + dist 传进去跑 arthas。**不改目标 pod、退出自动清理**（trap EXIT 移除 `spec.ephemeralContainers`）。
+`kubectl debug --profile=sysadmin` 起最小镜像临时容器，`--target` 共享目标 pod 的 process namespace，`kubectl cp` 把匹配版本+架构 JDK + dist 传进去跑 arthas。**不改目标 pod 正式字段**（ephemeralContainers 是临时字段）。⚠ 临时容器无法原地删除（K8s 不允许 patch `spec.ephemeralContainers`）——退出前请 `stop` 卸载 agent；彻底清残留 `kubectl delete pod` 重建。
 
 前置：K8s ≥ 1.25（ephemeral GA）、准入允许 ephemeral、临时容器镜像节点可达、`--profile=sysadmin` 可用。
 
@@ -275,11 +275,13 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 - ✅ fetch.sh 装底座（sha256 + ELF 双确认、json 防中毒）
 - ✅ probe-k8s.sh 摸底 6 项 + 路径建议（CSV + 路径分布汇总）
 - ✅ 路径 A：kubectl exec（容器 java + 三道版本探测 fallback）
-- ✅ 路径 C：kubectl debug 临时容器（零侵入、三道探测 + class major 兜底、退出清理）
+- ✅ 路径 C：kubectl debug 临时容器（零侵入、三道探测 + class major 兜底）
 - ✅ JDK 8/11/17/21 × x64/aarch64 全覆盖
+- ✅ 本地 kind 集群试跑（`lab/`）：probe 矩阵 4 形态全命中、路径 A/C 端到端跑通、修 3 个路径 C bug（cp dest 写法 / 默认镜像无 glibc / cleanup patch 死代码）
 
 **待做**：
-- [ ] 真实集群试跑：probe 6 项准确性、ephemeral `--profile=sysadmin` 在受限集群可用性、cp 大 JDK 耗时、跨容器 AttachListener UnixSocket 连通性
+- [ ] 受限托管集群（GKE/EKS + PSP）试跑 `--profile=sysadmin` 可用性
+- [ ] aarch64 双架构真机试跑（本地 x64 测不了，需 ARM 节点）
 - [ ] attach-k8s.sh fallback：readOnlyRootFS 走 emptyDir（当前只处理 JRE-only）
 - [ ] 批量编排 + 逐类漏洞验证 playbook（probe 清单 → 批量 attach 跑 playbook → 归档报告）——把单条手工 attach 变成百来个服务批量实证闭环
 - [ ] tunnel-server 集中管理（零侵入下收益有限，优先级低于批量编排）

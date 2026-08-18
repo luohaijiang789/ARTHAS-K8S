@@ -137,17 +137,24 @@ tools/
 - **json 中毒防护**：坏 json 验证 `jq -e` 拦截
 - **版本 case 匹配**：各种版本字符串（纯数字、`1.8.0_502`、`openjdk version "..."`、UNKNOWN、空）验证匹配
 
-### 待真实集群验证
+### 本地已验证（kind v1.31 + 标准矩阵）
 
-本地模拟覆盖不了的（需真 K8s + 真 pod）：
+`lab/` 测试集群已验证（2026-08-18）：
 
-- probe 6 项在常见加固组合下的准确性（尤其 ephemeral 试探清理）
-- attach-ephemeral `--profile=sysadmin` 在受限集群可用性
-- cp 大 JDK 耗时
-- **跨容器 AttachListener UnixSocket 连通性**（attach 机制本身在跨 rootFS 下的行为，本地无法模拟）
-- readOnlyRootFS 目标的 attach socket 写位置
+- ✅ probe 6 项准确性：4 种加固形态（normal/distroless/jre/readonly）全部命中预期选路分支
+- ✅ attach-ephemeral `--profile=sysadmin`：kind 节点 privileged，4 pod 全 `ephemeral=yes`
+- ✅ cp 大 JDK 耗时：184M jdk-17-x64 本地 0.7s（基准，真集群跨网会更慢）
+- ✅ 跨容器 AttachListener UnixSocket 连通性：glibc 临时容器 → distroless 目标 JVM，`sc -d`/`jad`/`getstatic` 成功
+- 🔧 修了 3 个路径 C bug（详见 git log）：kubectl cp dest 写法、默认基镜像无 glibc、cleanup patch 死代码
 
-这些在路线图标了，需真实加固 pod 试跑。
+### 待真集群验证
+
+本地覆盖不了的：
+
+- `--profile=sysadmin` 在**受限托管集群**（GKE/EKS + PSP/准入）可用性
+- readOnlyRootFS **无 emptyDir** 时 attach socket 写位置
+- aarch64 双架构路径（需 ARM 节点，如 Oracle Cloud 免费 ARM）
+- 跨节点 cp 大 JDK 耗时（本地单节点不具代表性）
 
 ## 历史
 

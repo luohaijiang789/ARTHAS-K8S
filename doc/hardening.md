@@ -108,7 +108,7 @@ major version → JDK 版本映射：
 | 61 | 17 |
 | 65 | 21 |
 
-实现（busybox 1.36 含 unzip applet）：
+实现（默认 debian:bookworm-slim，脚本探测前 apt-get 装 unzip）：
 
 ```sh
 fc=$(unzip -Z1 "$jar" 2>/dev/null | grep '\.class$' | head -1)   # 列 jar 内容取首个 class
@@ -129,7 +129,7 @@ mj=$(unzip -p "$jar" "$fc" 2>/dev/null | od -An -tu1 -j6 -N2 | awk '{print $1*25
 ```
 
 - `$bin` 是目标 java 二进制路径（从 cmdline 取）
-- **常失败**：目标 java 在目标容器 rootfs，临时容器里执行它需要目标的动态链接库（libjli.so 等），临时容器（busybox）没有 → `No such file or directory` 或 segfault
+- **常失败**：目标 java 在目标容器 rootfs，临时容器里执行它需要目标的动态链接库（libjli.so 等），临时容器可能没有 → `No such file or Directory` 或 segfault（glibc 基镜像能跑本地传的 JDK，但跑目标容器内的 java 仍可能缺其依赖）
 - 失败时输出空或报错，外层 case 不匹配 → 走 FALLBACK
 
 ### FALLBACK：默认 jdk-17
@@ -152,19 +152,18 @@ mj=$(unzip -p "$jar" "$fc" 2>/dev/null | od -An -tu1 -j6 -N2 | awk '{print $1*25
 
 ## probe 的试探安全性
 
-probe 第 6 项（ephemeral 是否允许）会**真的创建一个 ephemeral 容器再删掉**来试探准入。两个安全措施：
+probe 第 6 项（ephemeral 是否允许）会**真的创建一个 ephemeral 容器**来试探准入。两个要点：
 
-1. **先查已有 ephemeral**：`spec.ephemeralContainers` 非空时跳过试探——避免在别人正在调试的 pod 上动手脚
+1. **先查已有 ephemeral**：`spec.ephemeralContainers` 非空时直接判 `yes(已有 N 个)`，不试探——避免在别人正在调试的 pod 上动手脚，也避免重复试探累积残留
 2. **试探带 `--profile=sysadmin`**：和实战 attach-ephemeral 一致，避免"probe 不带 profile 判 yes、实战带 profile 被拒"的误判
-3. **清理只删本次产生**：试探前 `pre_ephe=0` 保证数组原本为空，`remove /spec/ephemeralContainers` 只删本次试探产生的（不会误删他人的会话——因为前提是原本为空才试探）
+3. **试探容器不原地删除**：K8s 不允许 patch 删 `spec.ephemeralContainers`（Forbidden），试探容器退出后 spec 字段残留但已 Completed，不影响后续 attach（脚本新建临时容器）。彻底清残留靠 `kubectl delete pod` 重建
 
-批量 probe 百来个服务时，每个 pod 都会改一次 spec（创建+删除 ephemeral）。可能触发 webhook/告警，建议在低峰做。
+批量 probe 百来个服务时，每个被试探的 pod 都会留下一个 Completed 的 `debugger-XXXX` 字段。可能触发 webhook/告警，建议在低峰做、或事后批量 rollout restart 清理。
 
 ## 跨容器 attach 的剩余限制
 
-即便版本架构都对，跨容器 attach 还有两个只有真实集群能验的点：
+本地 kind 集群已验证跨容器 attach 机制本身可通（glibc debian 临时容器 → distroless 目标 JVM，`sc -d`/`jad`/`getstatic` 全部成功）。剩余待真集群验证：
 
-1. **AttachListener UnixSocket**：arthas attach 走 `/tmp/.attach_pid<pid>` UnixSocket。临时容器和目标容器共享 process ns 但 rootFS 不同——socket 文件写在**谁的 /tmp**？readOnlyRootFS 目标写不了 /tmp 怎么办？这是待真实集群验证的点
-2. **`--profile=sysadmin` 可用性**：受限集群可能禁 sysadmin profile，需放宽或换 nsenter 方式
-
-这两个不在本地能验的范围内，路线图里标了待真实集群试跑。
+1. **AttachListener UnixSocket 与 readOnlyRootFS**：arthas attach 走 `/tmp/.attach_pid<pid>` UnixSocket。临时容器和目标容器共享 process ns 但 rootFS 不同——socket 文件写在**谁的 /tmp**？readOnlyRootFS 目标写不了 /tmp 时是否仍能 attach？本地矩阵里 `app-readonly` 挂了 emptyDir:/tmp 故能过，真·只读（无 emptyDir）待验
+2. **`--profile=sysadmin` 可用性**：本地 kind 节点 privileged 全过；受限托管集群（GKE/EKS + PSP/准入）可能禁 sysadmin profile，需放宽或换 nsenter 方式
+3. **aarch64 双架构**：本地 x64 测不了，需 ARM 节点（如 Oracle Cloud 免费 ARM）

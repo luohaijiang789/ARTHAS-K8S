@@ -61,15 +61,16 @@
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `ephemeral 容器未创建` | 准入禁 ephemeral 或镜像拉取失败 | probe 第 6 项应提前发现；检查准入策略、基础镜像节点可达性 |
-| ephemeral 创建即退出 | 旧版 `false "sleep 3600"` bug | 已修为 `sleep 3600`；若仍退出检查基础镜像有无 sleep applet |
+| ephemeral 创建即退出 | `sleep` 缺失或镜像问题 | 默认 debian:bookworm-slim 有 sleep；若自定义 `--image=` 须含 sleep + glibc |
 | `本地缺少 jdk-<v>-<arch>` | fetch 没下对应架构/版本 | 重跑 `bash tools/fetch.sh` 下双架构 8 个 JDK |
-| cp 到 ephemeral 失败 | 容器未 Running 或无 tar | 脚本已等 Running；确认基础镜像有 tar（busybox 有） |
+| cp 到 ephemeral 失败 | 容器未 Running 或 dest 写法错 | 脚本用 `pod:/tmp/file -c <ephem>` 写法（旧版 `pod:ephem:/tmp` 错误已修）；确认容器 Running |
+| `libdl.so.2 not found` / `java 启动即 127` | 基础镜像无 glibc | `--image=` 用了 busybox(scratch) 或 alpine(musl)；须 glibc 系（debian/ubuntu/temurin 基） |
 | 版本探测全失败→默认 17 | jlink + 无可读 jar + bin 跑不起来 | 默认 17 是安全网，目标若非 17 会 attach 失败；用 `--jdk=` 强制 |
 | 架构误判（x64 传 aarch64 包） | 节点 label 缺失且 uname 失败 | 罕见；脚本会 warn 默认 x64，aarch64 节点用 `--jdk=` 也救不了架构——确认节点 label |
 | `--profile=sysadmin` 被拒 | 集群禁 sysadmin profile | 需放宽 profile 或换 nsenter 方式（待支持） |
-| 跨容器 attach 失败（socket） | AttachListener UnixSocket 跨 rootFS 问题 | 待真实集群验证的已知点；readOnlyRootFS 目标写不了 /tmp 是子情况，待 emptyDir 支持 |
+| 跨容器 attach 失败（socket） | AttachListener UnixSocket 跨 rootFS 问题 | 本地 kind 已验证可通；readOnlyRootFS 目标写不了 /tmp 是子情况，待 emptyDir 支持 |
+| ephemeral 容器残留清不掉 | K8s 不允许 patch 删 `spec.ephemeralContainers` | 非故障——彻底清 `kubectl delete pod` 重建；agent 清理靠 `stop` 或 stop-arthas.sh |
 | `no target java pid found in /proc` | process namespace 没共享或目标 java 名不匹配 | 确认 `--target` 容器名对；目标 java 进程 cmdline 是否真含 `java` |
-| ephemeral 未自动清理 | trap patch 失败 | 脚本会打手动命令，复制执行 `kubectl patch pod ... remove /spec/ephemeralContainers` |
 | cp 大 JDK 慢 | 200-350M 传输 | 正常，首次慢；后续缓存 tar；网络差考虑换更近调试节点 |
 
 ## arthas 控制台
