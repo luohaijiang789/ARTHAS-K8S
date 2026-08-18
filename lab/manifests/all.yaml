@@ -1,0 +1,129 @@
+# Arthas-K8s 标准矩阵测试靶机：4 种加固形态，各命中一条 probe 选路分支
+# namespace: arthas-lab
+# 预期 probe 路径分布：exec-direct×2（normal, readonly） / ephemeral×2（distroless, jre）
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arthas-lab
+---
+# app-normal: JDK + shell + root + 可写 rootFS → exec-direct（路径 A，容器自有 java）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-normal
+  namespace: arthas-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: app-normal }
+  template:
+    metadata:
+      labels: { app: app-normal }
+    spec:
+      containers:
+        - name: app
+          image: arthas-lab/normal:17
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-normal
+  namespace: arthas-lab
+spec:
+  selector: { app: app-normal }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+# app-distroless: 无 shell → ephemeral-container（路径 C 主力）
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-distroless
+  namespace: arthas-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: app-distroless }
+  template:
+    metadata:
+      labels: { app: app-distroless }
+    spec:
+      containers:
+        - name: app
+          image: arthas-lab/distroless:17
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-distroless
+  namespace: arthas-lab
+spec:
+  selector: { app: app-distroless }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+# app-jre: JRE-only（无 jcmd/tools.jar）→ ephemeral-container(传 JDK 进 debug 容器)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-jre
+  namespace: arthas-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: app-jre }
+  template:
+    metadata:
+      labels: { app: app-jre }
+    spec:
+      containers:
+        - name: app
+          image: arthas-lab/jre:17
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-jre
+  namespace: arthas-lab
+spec:
+  selector: { app: app-jre }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+# app-readonly: JDK + shell + readOnlyRootFS(emptyDir:/tmp) + nonRoot uid 1000
+# probe 仍判 exec-direct（readOnlyRootFS/runAs 只报告不参与选路）→ 路径 A 在非 root 下跑
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-readonly
+  namespace: arthas-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: app-readonly }
+  template:
+    metadata:
+      labels: { app: app-readonly }
+    spec:
+      containers:
+        - name: app
+          image: arthas-lab/normal:17
+          ports: [{ containerPort: 8080 }]
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-readonly
+  namespace: arthas-lab
+spec:
+  selector: { app: app-readonly }
+  ports: [{ port: 8080, targetPort: 8080 }]

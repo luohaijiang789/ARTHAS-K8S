@@ -15,3 +15,6 @@ tools/cache/
 
 # === 批量验证报告产出（不进 git）===
 reports/
+
+# === 测试集群构建产物（lab/ 源码入 git，mvn 产物不入）===
+lab/app/target/
