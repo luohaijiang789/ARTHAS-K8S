@@ -143,6 +143,8 @@ thread -b                                  找阻塞线程 / 死锁
 
 > ⚠ **ognl / redefine / heapdump 是敏感操作**：能改运行时状态、触发真实逻辑、dump 含凭据的堆。仅在自有/测试环境用。建议先 `watch`/`trace` 观察确认可达，再决定是否 ognl 触发。
 
+> **多人协作**：脚本自动随机端口 + 标记文件自动复用，不用提前商量端口。各跑 attach 脚本即可——同 pod 复用同一 agent（各 session 独立，watch 输出私有），不同 pod 天然隔离。退出 `stop` 释放增强，或 `bash tools/stop-arthas.sh <pod>` 清理。详见 [doc/multi-user.md](doc/multi-user.md)。
+
 ---
 
 ## 目录结构
@@ -165,7 +167,7 @@ ARTHAS-K8S/
     ├── probe-k8s.sh                      # 摸底 pod 加固 6 项，判定 attach 路径
     ├── attach-k8s.sh                     # 路径 A：kubectl exec（未加固 pod）
     ├── attach-ephemeral.sh               # 路径 C：kubectl debug 临时容器（加固 pod 主力）
-    ├── stop-arthas.sh                    # 清理残留 arthas agent（attach + -c stop）
+    ├── stop-arthas.sh                    # 清理残留 agent（读标记端口 + -c stop + 删标记）
     ├── MANIFEST.txt                      # 版本 + sha256 清单（fetch 自动生成，版本锚点）
     ├── arthas/                           # [gitignore] arthas 4.3.4 boot.jar + dist/
     ├── jdk/                              # [gitignore] 8 个 JDK：jdk-{8,11,17,21}-{x64,aarch64}

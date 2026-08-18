@@ -151,12 +151,44 @@ else
 fi
 
 # ---- 运行 arthas ----
-# 多人同 attach 同一 pod：arthas 自动检测已有 agent 并复用（连到它的 3658），
-# 各人各得一个控制台，无需协调端口。退出用 stop 卸载 agent（非 quit/Ctrl+C）。
+# 多人协作：随机端口 + 标记文件自动复用（不用提前商量端口）
+#   首个用户：/tmp/arthas-port-<pid> 不存在 → 选随机端口起 agent → 写标记
+#   后续用户：标记存在 → 读记录端口 attach → arthas 检测已有 agent 自动复用
+#   stop 后：stop-arthas.sh 删标记（agent 没了）
+# arthas 4.3.4 同一 JVM 只能一个 agent，所以同 pod 多人复用同一 agent（各 session 独立）。
+
+# 探测目标 java pid（容器内 /proc 找 java，排除 arthas-boot 自己）
+TARGET_PID=$(kubectl exec -n "$ns" "$podname" -- sh -c '
+  for p in /proc/[0-9]*; do
+    c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
+    case "$c" in *java*) basename "$p"; break ;; esac
+  done
+' 2>/dev/null | head -1)
+[ -z "$TARGET_PID" ] && { log_error "未找到目标 java pid"; exit 1; }
+log_info "target pid: $TARGET_PID"
+
+# 端口逻辑：读标记文件复用，否则随机端口
+PORT_FILE="/tmp/arthas-port-$TARGET_PID"
+PORT=$(kubectl exec -n "$ns" "$podname" -- sh -c "cat $PORT_FILE 2>/dev/null" 2>/dev/null)
+if [ -n "$PORT" ]; then
+  log_info "reuse arthas agent on port $PORT（已有 agent，自动复用）"
+else
+  # 随机端口 20000-29999（shell RANDOM；arthas 不支持 --telnet-port=0 的 OS 随机）
+  PORT=$(( (RANDOM % 10000) + 20000 ))
+  log_info "new arthas agent on random port $PORT（首次，写标记 $PORT_FILE）"
+fi
+
 log_info "starting arthas-boot (dist at $ARTHAS_HOME_IN_POD)..."
 log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit），卸载 agent 释放增强"
+# 首次：--telnet-port=$PORT --http-port=-1 起 agent 在随机端口（禁 web）
+# 复用：--telnet-port=$PORT 连已有 agent（arthas 检测 already using 后 skip attach 复用）
 kubectl exec -it -n "$ns" "$podname" -- "$RUN_JAVA" \
-  -jar "$ARTHAS_HOME_IN_POD/arthas-boot.jar"
+  -jar "$ARTHAS_HOME_IN_POD/arthas-boot.jar" --telnet-port="$PORT" --http-port=-1 "$TARGET_PID"
+
+# 首次起 agent 成功后写标记（复用情况标记已在）
+if [ -z "$(kubectl exec -n "$ns" "$podname" -- sh -c "cat $PORT_FILE 2>/dev/null" 2>/dev/null)" ]; then
+  kubectl exec -n "$ns" "$podname" -- sh -c "echo $PORT > $PORT_FILE" 2>/dev/null
+fi
 
 log_info "arthas session ended."
-log_warn "若 agent 残留需清理（如增强未释放）：bash tools/stop-arthas.sh '$FLAG'"
+log_warn "彻底清理 agent + 标记：bash tools/stop-arthas.sh '$FLAG'（释放增强、删标记文件）"

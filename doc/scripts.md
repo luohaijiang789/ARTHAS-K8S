@@ -113,6 +113,8 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 **数字输入校验**：选 pod 时 `case "$idx" in ''|*[!0-9]*)` 校验是数字，避免非数字输入让 `$((idx-1))` 算术错误 + `set -e` 崩溃。
 
+**随机端口 + 标记文件自动复用**：探测目标 pid 后，读 `/tmp/arthas-port-<pid>`：存在则用记录端口 attach（arthas 检测已有 agent 自动复用），不存在则随机选 20000-29999 端口起 agent 并写标记。`--http-port=-1` 禁用 web console（只需 telnet）。这样多人不用提前商量端口——脚本自动协调。详见 [多人协作与退出清理](multi-user.md)。
+
 ---
 
 ## attach-ephemeral.sh — 路径 C
@@ -165,28 +167,38 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 `trap cleanup_ephe EXIT`：退出时 `kubectl patch pod --type=json -p='[{"op":"remove","path":"/spec/ephemeralContainers"}]'`。移除整个 ephemeralContainers 数组——因为本次会话产生的 ephemeral 退出后无意义，且 probe 已保证试探时数组原本为空（本次创建的就是全部）。patch 失败时打手动清理命令。
 
-> **注意**：trap 清理的是 ephemeral 容器，不是目标 JVM 的 arthas agent。路径 C 的 agent 注入目标 JVM，ephemeral 销毁后 agent 仍在——但 4.3.4 下次 attach 会自动复用它（不阻塞）。要做干净释放增强用 `stop`。详见 [多人协作与退出清理](multi-user.md)。
+> **注意**：trap 清理的是 ephemeral 容器，不是目标 JVM 的 arthas agent。路径 C 的 agent 注入目标 JVM，ephemeral 销毁后 agent 仍在（标记文件也在目标 rootFS），下个用户 attach 自动复用。要干净释放用 `stop` 或 `stop-arthas.sh`。详见 [多人协作与退出清理](multi-user.md)。
+
+**随机端口 + 标记文件**（外层 bash 决定端口，不依赖容器内 awk）：外层探测目标 pid，读 `/proc/<pid>/root/tmp/arthas-port-<pid>`：存在则复用记录端口，不存在则 `RANDOM` 选 20000-29999。端口值通过 sh -c 单引号拼接传进临时容器的 arthas-boot。标记写在目标容器 rootFS（跨临时容器持久，路径 C 不同用户的 ephemeral 都能经 `/proc/<pid>/root/` 读到）。`--http-port=-1` 禁 web。详见 [多人协作与退出清理](multi-user.md)。
 
 ---
 
-## stop-arthas.sh — 清理残留 agent
+## stop-arthas.sh — 清理残留 agent + 标记
 
-**做什么**：非交互卸载目标 JVM 的 arthas agent（`-c stop`），释放它残留的增强（watch/trace 拦截、redefine 字节码）。
+**做什么**：非交互卸载目标 JVM 的 arthas agent（`-c stop`），释放残留增强，并删标记文件。
 
-> **修正一个误区**：4.3.4 实测，残留 agent **不会阻塞下次 attach**——arthas 自动检测已有 agent 并复用。所以 stop-arthas.sh 不是为"解锁端口让下次 attach 能成功"，而是为**干净释放增强 / 强制重置 agent**。残留的 watch/trace/redefine 会延续到下个会话甚至影响服务，stop 才彻底释放。
+### 背景：随机端口 + 标记文件
+
+两 attach 脚本起 agent 时用**随机端口**（20000-29999），并把端口记到 `/tmp/arthas-port-<pid>`（路径 A）或 `/proc/<pid>/root/tmp/arthas-port-<pid>`（路径 C，目标容器 rootFS 跨临时容器持久）。后续用户读标记复用同一 agent。
+
+stop-arthas.sh 要读标记拿端口（agent 不在默认 3658），stop 后删标记（agent 没了标记失效）。
 
 ### 流程
 
 ```
-选 pod → 探测容器 java + 目标 pid → cp arthas dist → arthas-boot -c stop <pid> → 清理 /tmp
+选 pod → 探测目标 pid → 读标记文件拿端口 → arthas-boot --telnet-port=$PORT -c stop <pid> → 删标记
 ```
 
 ### 关键决策
 
-**`-c stop <pid>` 非交互**：与 arthas-boot 官方示例顺序一致（`-h` 里有 `java -jar arthas-boot.jar -c 'sysprop; thread' <pid>`）。实测：default 端口二次 attach 会连到已有 agent 并成功 stop（"Arthas Server is going to shutdown"）。
+**读标记端口**：随机端口方案下 agent 不在默认 3658，stop 必须用记录的端口。无标记则试默认 3658（兼容旧残留）。
 
-**仅处理容器有 java 的 pod**（路径 A 风格）：distroless/JRE-only 的 agent 走 `attach-ephemeral.sh` attach 后手动 stop，或重启 pod。
+**`--telnet-port=$PORT -c stop <pid>`**：实测同端口二次 attach，arthas 检测 "already using port, skip attach" 后连已有 agent，`stop` 成功卸载（"Arthas Server is going to shutdown"）。
 
-**何时用**：做过 redefine/watch/trace 想干净释放；agent 状态异常想重置；路径 C ephemeral 销毁后清理目标 JVM 的 agent。详见 [多人协作与退出清理](multi-user.md#什么时候必须-stop)。
+**删标记幂等**：agent 已不存在时 stop 会失败，但删标记仍执行（幂等，不报错）。
+
+**仅处理容器有 java 的 pod**（路径 A 风格）：distroless/JRE-only 走 `attach-ephemeral.sh` attach 后手动 stop，或重启 pod。
+
+**何时用**：做过 redefine/watch/trace 想干净释放；agent 状态异常想重置；标记端口失效连不上时清理。详见 [多人协作与退出清理](multi-user.md)。
 
 > ⚠ `-c stop` 清理残留的有效性依赖 arthas 对"attach 到已有 agent 的 JVM"的复用/增强行为。`-c` 执行命令、`stop` 卸载 agent 已是 arthas 标准行为，但跨容器对残留 agent 发 stop 的实际行为需真实环境验证。若 `stop-arthas.sh` 无效，走重启 pod（`kubectl delete pod`）。

@@ -86,9 +86,22 @@ if [ -z "$target_pid" ]; then
 fi
 log_info "target pid: $target_pid  → 发 stop 卸载 arthas agent"
 
-# 非交互：arthas-boot -c stop <pid>（attach 后执行 stop 命令，卸载 agent 后退出）
-# 对残留 agent：arthas attach 同一 JVM 会连上已有 agent，stop 卸载它
-kubectl exec -n "$ns" "$podname" -- "$container_java" \
-  -jar /tmp/dist/arthas-boot.jar -c stop "$target_pid" 2>&1 | tail -20
+# 读标记文件拿 agent 端口（随机端口方案：agent 不在默认 3658）
+PORT_FILE="/tmp/arthas-port-$target_pid"
+PORT=$(kubectl exec -n "$ns" "$podname" -- sh -c "cat $PORT_FILE 2>/dev/null" 2>/dev/null)
+if [ -n "$PORT" ]; then
+  log_info "agent port: $PORT（从标记文件读）"
+  PORT_ARG="--telnet-port=$PORT"
+else
+  log_info "无标记文件，尝试默认端口 3658"
+  PORT_ARG=""
+fi
 
-log_info "stop 已发送。若仍残留（端口 3658 仍占），重启 pod: kubectl delete pod -n $ns $podname"
+# 非交互：arthas-boot --telnet-port=$PORT -c stop <pid>
+# attach 同一 JVM → arthas 检测已有 agent（skip attach）→ 连该端口 → stop 卸载
+kubectl exec -n "$ns" "$podname" -- "$container_java" \
+  -jar /tmp/dist/arthas-boot.jar $PORT_ARG -c stop "$target_pid" 2>&1 | tail -20
+
+# 清理标记文件（agent 已卸载，标记失效）
+kubectl exec -n "$ns" "$podname" -- sh -c "rm -f $PORT_FILE" 2>/dev/null || true
+log_info "stop 已发送 + 标记文件已删。若仍残留：重启 pod: kubectl delete pod -n $ns $podname"

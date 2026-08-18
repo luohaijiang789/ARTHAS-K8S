@@ -221,9 +221,35 @@ log_info "cp jdk-$use_jdk-$arch -> ephemeral..."
 kubectl cp "$JDK_TAR" -n "$ns" "$pod":"$EPHE_ACTUAL":/tmp/jdk.tar.gz -c "$EPHE_ACTUAL"
 
 # ---- 在临时容器里解压 + 跑 arthas-boot attach 目标 pid ----
-# 多人同 attach 同一 pod：arthas 自动检测已有 agent 并复用，各人各得一个控制台。
-# 即使本次 ephemeral 销毁，目标 JVM 的 agent 仍在，下个人 attach 自动连上复用。
+# 多人协作：随机端口 + 标记文件自动复用（不用提前商量端口）
+#   首个用户：标记不存在 → 随机端口起 agent → 写标记到目标容器 rootFS
+#   后续用户：标记存在 → 读记录端口 attach → arthas 检测已有 agent 自动复用
+# 标记文件写在目标容器 rootFS（/proc/<pid>/root/tmp/），所有临时容器经此路径可读
+# （pod 内共享网络 ns，agent 端口在 pod 网络空间，临时容器连 127.0.0.1:port 即目标 agent）
+# arthas 4.3.4 同一 JVM 只能一个 agent，同 pod 多人复用同一 agent（各 session 独立）。
 # 退出用 stop 卸载 agent（路径 C：agent 在目标 JVM，ephemeral 销毁≠agent 清理）。
+
+# 外层探测目标 pid + 端口（外层 bash 有 RANDOM，不依赖容器内 awk strtonum）
+TARGET_PID=$(kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c '
+  for p in /proc/[0-9]*; do
+    c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
+    case "$c" in *java*) case "$c" in *arthas-boot.jar*) continue ;; esac
+              basename "$p"; break ;; esac
+  done
+' 2>/dev/null | head -1)
+[ -z "$TARGET_PID" ] && { log_error "未找到目标 java pid"; exit 1; }
+log_info "target pid: $TARGET_PID"
+
+# 标记文件在目标容器 rootFS（跨临时容器持久）
+PORT_FILE="/tmp/arthas-port-$TARGET_PID"
+PORT=$(kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c "cat /proc/$TARGET_PID/root$PORT_FILE 2>/dev/null" 2>/dev/null)
+if [ -n "$PORT" ]; then
+  log_info "reuse arthas agent on port $PORT（已有 agent，自动复用）"
+else
+  PORT=$(( (RANDOM % 10000) + 20000 ))
+  log_info "new arthas agent on random port $PORT（首次）"
+fi
+
 log_info "starting arthas in ephemeral container..."
 log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit）——agent 在目标 JVM，ephemeral 销毁不会卸载它"
 
@@ -233,19 +259,12 @@ kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -it -- sh -c '
   tar -zxf arthas-dist.tar.gz
   tar -zxf jdk.tar.gz
   JAVA=/tmp/jdk-'"$use_jdk"'-'"$arch"'/bin/java
-  # 找目标 java pid（共享 process ns，/proc 可见；排除本 launcher）
-  target_pid=""
-  for p in /proc/[0-9]*; do
-    c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
-    case "$c" in
-      *java*) case "$c" in *arthas-boot.jar*) continue ;; esac
-              target_pid=$(basename "$p"); break ;;
-    esac
-  done
-  [ -z "$target_pid" ] && { echo "ERR: no target java pid found in /proc"; exit 2; }
-  echo "target pid: $target_pid"
-  exec "$JAVA" -jar /tmp/dist/arthas-boot.jar "$target_pid"
+  exec "$JAVA" -jar /tmp/dist/arthas-boot.jar --telnet-port='"$PORT"' --http-port=-1 '"$TARGET_PID"'
 '
 
+# 首次起 agent 成功后写标记（标记不存在才写，记录本次端口供后续用户复用）
+kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -- sh -c \
+  "[ -f /proc/$TARGET_PID/root$PORT_FILE ] || echo $PORT > /proc/$TARGET_PID/root$PORT_FILE" 2>/dev/null || true
+
 log_info "arthas session ended."
-log_warn "若 agent 残留需清理（增强未释放/想重置）：bash tools/stop-arthas.sh '$FLAG'"
+log_warn "彻底清理 agent + 标记：bash tools/stop-arthas.sh '$FLAG'（释放增强、删标记文件）"
