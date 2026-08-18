@@ -34,6 +34,8 @@
 - [attach 失败排查](#attach-失败排查)
 - [路线图](#路线图)
 
+> 📖 **深入文档**见 [doc/](doc/README.md)：架构设计、脚本内部机制、加固字节级处理、arthas 漏洞验证实战、排查手册、扩展路线。本 Readme 是精炼门面，doc/ 讲透每个部分。
+
 ---
 
 ## 快速开始
@@ -147,8 +149,16 @@ thread -b                                  找阻塞线程 / 死锁
 
 ```
 ARTHAS-K8S/
-├── Readme.md
+├── Readme.md                             # 精炼门面
 ├── .gitignore                            # 排除 3.7G 底座 + 编辑器临时 + reports/
+├── doc/                                  # 深入文档（架构/脚本/加固/实战/排查/扩展）
+│   ├── README.md                         # 文档索引 + 阅读路径
+│   ├── architecture.md                   # 架构与设计
+│   ├── scripts.md                        # 4 脚本内部机制详解
+│   ├── hardening.md                      # 加固场景处理（架构判定 + 三道版本探测）
+│   ├── arthas-commands.md                # Arthas 漏洞验证实战
+│   ├── troubleshooting.md                # 排查手册
+│   └── development.md                    # 扩展与路线图
 └── tools/
     ├── fetch.sh                          # 幂等下载/校验/解压，生成 MANIFEST
     ├── probe-k8s.sh                      # 摸底 pod 加固 6 项，判定 attach 路径
