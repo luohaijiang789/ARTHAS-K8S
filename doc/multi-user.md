@@ -57,8 +57,10 @@ bash tools/attach-ephemeral.sh order-service
 # B 也进入 arthas 控制台——arthas 检测到 A 的 agent，连上去，给 B 独立 session
 ```
 
-- A 和 B 各有独立控制台,共享同一个 agent
-- A 触发 `watch com.x.OrderService createOrder`,B 在自己控制台 `watch` 也能看到命中结果（共享 agent 数据）
+- A 和 B 各有独立控制台、独立 session（各自 SESSION_ID），共享同一个 agent 实例
+- **watch/trace 的输出是 session 私有的**：A 跑 watch 的命中结果只输出到 A 的控制台，B 看不到（实测：A 命中 3 次、B 命中 0 次，B 只看到自己的 session 信息）
+- 但 A 注册 watch/trace 的**字节码增强是 agent 级共享**：A watch 了某方法后目标方法被插桩，B 连上时 `jad` 看到的是被 A 增强过的字节码；B 自己也 watch 同方法会叠加 listener（B 能看到自己的命中，看不到 A 的）
+- A `stop`/watch 超时后增强移除，B 再看就是原始字节码
 - 不需要 port-forward、telnet、端口约定——**零协调**
 - 路径 C 同理:即使 A 的 ephemeral 容器销毁了,A attach 时注入目标 JVM 的 agent 还在,B attach 自动连上复用
 
