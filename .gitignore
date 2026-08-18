@@ -1,0 +1,17 @@
+# === 工具底座（由 tools/fetch.sh 重建，不入 git，约 3.7G）===
+# clone 后跑 `bash tools/fetch.sh` 即可恢复 jdk/arthas/cache
+tools/jdk/
+tools/arthas/
+tools/cache/
+
+# === 编辑器 / 系统临时 ===
+*.swp
+*.swo
+*~
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# === 批量验证报告产出（不进 git）===
+reports/
