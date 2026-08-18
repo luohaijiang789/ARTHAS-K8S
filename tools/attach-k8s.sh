@@ -29,16 +29,8 @@ command -v tar    >/dev/null || { log_error "tar not found"; exit 1; }
 # 连错集群。旧版强制 root 是历史遗留（旧脚本用 huaweijdk 需 root 挂载），现已无此需要。
 # （路径 C attach-ephemeral.sh 也不要求 root，两脚本一致。）
 
-TELNET_PORT=""; HTTP_PORT=""; FLAG=""
-for a in "$@"; do
-  case "$a" in
-    --telnet-port=*) TELNET_PORT="${a#*=}" ;;
-    --http-port=*)   HTTP_PORT="${a#*=}" ;;
-    --*) echo "unknown option: $a"; exit 1 ;;
-    *) FLAG="$a" ;;
-  esac
-done
-[ -z "$FLAG" ] && { echo 'please unique k8s pod flag'; exit 1; }
+if [ -z "${1:-}" ]; then echo 'please unique k8s pod flag'; exit 1; fi
+FLAG="$1"
 
 # ---- 交互式选 pod（awk 取列 + index 子串匹配 ns/pod，避免误命中 NODE/IP）----
 mapfile -t pods < <(kubectl get po -A -o wide \
@@ -159,15 +151,12 @@ else
 fi
 
 # ---- 运行 arthas ----
-PORT_ARGS=""
-[ -n "$TELNET_PORT" ] && PORT_ARGS="$PORT_ARGS --telnet-port=$TELNET_PORT"
-[ -n "$HTTP_PORT" ]   && PORT_ARGS="$PORT_ARGS --http-port=$HTTP_PORT"
-
-log_info "starting arthas-boot (dist at $ARTHAS_HOME_IN_POD)...${PORT_ARGS:+ ports:$PORT_ARGS}"
-log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit），否则 agent 残留占 3658，下次 attach 失败"
-# shellcheck disable=SC2086
+# 多人同 attach 同一 pod：arthas 自动检测已有 agent 并复用（连到它的 3658），
+# 各人各得一个控制台，无需协调端口。退出用 stop 卸载 agent（非 quit/Ctrl+C）。
+log_info "starting arthas-boot (dist at $ARTHAS_HOME_IN_POD)..."
+log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit），卸载 agent 释放增强"
 kubectl exec -it -n "$ns" "$podname" -- "$RUN_JAVA" \
-  -jar "$ARTHAS_HOME_IN_POD/arthas-boot.jar" $PORT_ARGS
+  -jar "$ARTHAS_HOME_IN_POD/arthas-boot.jar"
 
 log_info "arthas session ended."
-log_warn "若未 stop 退出，目标 JVM 可能残留 arthas agent，清理：bash tools/stop-arthas.sh '$FLAG'"
+log_warn "若 agent 残留需清理（如增强未释放）：bash tools/stop-arthas.sh '$FLAG'"

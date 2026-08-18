@@ -165,13 +165,15 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 `trap cleanup_ephe EXIT`：退出时 `kubectl patch pod --type=json -p='[{"op":"remove","path":"/spec/ephemeralContainers"}]'`。移除整个 ephemeralContainers 数组——因为本次会话产生的 ephemeral 退出后无意义，且 probe 已保证试探时数组原本为空（本次创建的就是全部）。patch 失败时打手动清理命令。
 
-> **注意**：trap 清理的是 ephemeral 容器，不是目标 JVM 的 arthas agent。路径 C 的 agent 注入目标 JVM，退出时必须在 arthas 控制台 `stop` 卸载，否则残留。详见 [多人协作与退出清理](multi-user.md#路径-c-的特殊隐患重要)。
+> **注意**：trap 清理的是 ephemeral 容器，不是目标 JVM 的 arthas agent。路径 C 的 agent 注入目标 JVM，ephemeral 销毁后 agent 仍在——但 4.3.4 下次 attach 会自动复用它（不阻塞）。要做干净释放增强用 `stop`。详见 [多人协作与退出清理](multi-user.md)。
 
 ---
 
 ## stop-arthas.sh — 清理残留 agent
 
-**做什么**：arthas 异常退出（Ctrl+C/quit/ssh断/路径C临时容器销毁）后，agent 残留在目标 JVM 占 3658 端口，导致下次 attach 失败。本脚本 attach 后非交互发 `stop` 命令卸载残留 agent。
+**做什么**：非交互卸载目标 JVM 的 arthas agent（`-c stop`），释放它残留的增强（watch/trace 拦截、redefine 字节码）。
+
+> **修正一个误区**：4.3.4 实测，残留 agent **不会阻塞下次 attach**——arthas 自动检测已有 agent 并复用。所以 stop-arthas.sh 不是为"解锁端口让下次 attach 能成功"，而是为**干净释放增强 / 强制重置 agent**。残留的 watch/trace/redefine 会延续到下个会话甚至影响服务，stop 才彻底释放。
 
 ### 流程
 
@@ -181,10 +183,10 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 ### 关键决策
 
-**`-c stop <pid>` 非交互**：arthas-boot 官方示例就是 `-c 'cmd' <pid>` 顺序（`-h` 里有 `java -jar arthas-boot.jar -c 'sysprop; thread' <pid>`）。attach 目标 JVM 后执行 stop 命令，卸载 agent 后退出，全程非交互。
+**`-c stop <pid>` 非交互**：与 arthas-boot 官方示例顺序一致（`-h` 里有 `java -jar arthas-boot.jar -c 'sysprop; thread' <pid>`）。实测：default 端口二次 attach 会连到已有 agent 并成功 stop（"Arthas Server is going to shutdown"）。
 
-**仅处理容器有 java 的 pod**（路径 A 残留，最常见）：distroless/JRE-only 的残留（路径 C 场景）本脚本走不了路径 A，提示走 `attach-ephemeral.sh` attach 后手动 stop，或重启 pod。
+**仅处理容器有 java 的 pod**（路径 A 风格）：distroless/JRE-only 的 agent 走 `attach-ephemeral.sh` attach 后手动 stop，或重启 pod。
 
-**残留机制与清理方法**：见 [多人协作与退出清理](multi-user.md)——stop/quit/exit 区别、路径 C 特殊隐患、三种清理方法。
+**何时用**：做过 redefine/watch/trace 想干净释放；agent 状态异常想重置；路径 C ephemeral 销毁后清理目标 JVM 的 agent。详见 [多人协作与退出清理](multi-user.md#什么时候必须-stop)。
 
 > ⚠ `-c stop` 清理残留的有效性依赖 arthas 对"attach 到已有 agent 的 JVM"的复用/增强行为。`-c` 执行命令、`stop` 卸载 agent 已是 arthas 标准行为，但跨容器对残留 agent 发 stop 的实际行为需真实环境验证。若 `stop-arthas.sh` 无效，走重启 pod（`kubectl delete pod`）。
