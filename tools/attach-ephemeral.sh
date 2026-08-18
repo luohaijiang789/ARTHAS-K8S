@@ -44,11 +44,14 @@ repack_if_stale "$ARTHAS_DIST_TAR" "$ARTHAS_DIST_DIR" "dist"
 
 # ---- 解析参数 ----
 FORCE_JDK=""; FORCE_CONTAINER=""; FLAG=""
+TELNET_PORT=""; HTTP_PORT=""
 for a in "$@"; do
   case "$a" in
-    --image=*)     BASE_IMAGE="${a#*=}" ;;
-    --jdk=*)       FORCE_JDK="${a#*=}" ;;
-    --container=*) FORCE_CONTAINER="${a#*=}" ;;
+    --image=*)       BASE_IMAGE="${a#*=}" ;;
+    --jdk=*)         FORCE_JDK="${a#*=}" ;;
+    --container=*)   FORCE_CONTAINER="${a#*=}" ;;
+    --telnet-port=*) TELNET_PORT="${a#*=}" ;;
+    --http-port=*)   HTTP_PORT="${a#*=}" ;;
     --*) echo "unknown option: $a"; exit 1 ;;
     *) FLAG="$a" ;;
   esac
@@ -221,9 +224,17 @@ log_info "cp jdk-$use_jdk-$arch -> ephemeral..."
 kubectl cp "$JDK_TAR" -n "$ns" "$pod":"$EPHE_ACTUAL":/tmp/jdk.tar.gz -c "$EPHE_ACTUAL"
 
 # ---- 在临时容器里解压 + 跑 arthas-boot attach 目标 pid ----
-log_info "starting arthas in ephemeral container..."
-log_warn "退出 arthas (Ctrl+C 或 stop) 后临时容器会自动清理。"
+# 构造端口参数（默认空=用 arthas 默认 3658/8563；共享模式指定端口或残留绕过时用）
+PORT_ARGS=""
+[ -n "$TELNET_PORT" ] && PORT_ARGS="$PORT_ARGS --telnet-port=$TELNET_PORT"
+[ -n "$HTTP_PORT" ]   && PORT_ARGS="$PORT_ARGS --http-port=$HTTP_PORT"
 
+log_info "starting arthas in ephemeral container...${PORT_ARGS:+ ports:$PORT_ARGS}"
+log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit）——否则 agent 残留占 3658，下次 attach 失败"
+log_warn "⚠ 路径 C：arthas agent 注入目标 JVM，临时容器销毁≠agent 清理，必须在销毁前 stop"
+
+# sh -c 位置参数传 PORT_ARGS：_ 占 $0，端口参数进 $@，空时 $@ 为零参数
+# shellcheck disable=SC2086
 kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -it -- sh -c '
   set -e
   cd /tmp
@@ -241,7 +252,8 @@ kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -it -- sh -c '
   done
   [ -z "$target_pid" ] && { echo "ERR: no target java pid found in /proc"; exit 2; }
   echo "target pid: $target_pid"
-  exec "$JAVA" -jar /tmp/dist/arthas-boot.jar "$target_pid"
-'
+  exec "$JAVA" -jar /tmp/dist/arthas-boot.jar "$@" "$target_pid"
+' _ $PORT_ARGS
 
 log_info "arthas session ended."
+log_warn "若未 stop 退出，目标 JVM 可能残留 arthas agent，清理：bash tools/stop-arthas.sh '$FLAG'"

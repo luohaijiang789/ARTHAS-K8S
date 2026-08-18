@@ -151,19 +151,21 @@ thread -b                                  找阻塞线程 / 死锁
 ARTHAS-K8S/
 ├── Readme.md                             # 精炼门面
 ├── .gitignore                            # 排除 3.7G 底座 + 编辑器临时 + reports/
-├── doc/                                  # 深入文档（架构/脚本/加固/实战/排查/扩展）
+├── doc/                                  # 深入文档（架构/脚本/加固/实战/排查/协作/扩展）
 │   ├── README.md                         # 文档索引 + 阅读路径
 │   ├── architecture.md                   # 架构与设计
-│   ├── scripts.md                        # 4 脚本内部机制详解
+│   ├── scripts.md                        # 脚本内部机制详解
 │   ├── hardening.md                      # 加固场景处理（架构判定 + 三道版本探测）
 │   ├── arthas-commands.md                # Arthas 漏洞验证实战
 │   ├── troubleshooting.md                # 排查手册
+│   ├── multi-user.md                     # 多人协作与退出清理
 │   └── development.md                    # 扩展与路线图
 └── tools/
     ├── fetch.sh                          # 幂等下载/校验/解压，生成 MANIFEST
     ├── probe-k8s.sh                      # 摸底 pod 加固 6 项，判定 attach 路径
     ├── attach-k8s.sh                     # 路径 A：kubectl exec（未加固 pod）
     ├── attach-ephemeral.sh               # 路径 C：kubectl debug 临时容器（加固 pod 主力）
+    ├── stop-arthas.sh                    # 清理残留 arthas agent（attach + -c stop）
     ├── MANIFEST.txt                      # 版本 + sha256 清单（fetch 自动生成，版本锚点）
     ├── arthas/                           # [gitignore] arthas 4.3.4 boot.jar + dist/
     ├── jdk/                              # [gitignore] 8 个 JDK：jdk-{8,11,17,21}-{x64,aarch64}

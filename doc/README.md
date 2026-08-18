@@ -11,6 +11,7 @@
 | 处理加固 pod（distroless/JRE-only/jlink/禁 attach） | [加固场景处理](hardening.md) |
 | 用 arthas 验证某个具体漏洞（SQLi/反序列化/鉴权绕过…） | [Arthas 漏洞验证实战](arthas-commands.md) |
 | 跑挂了怎么排查 | [排查手册](troubleshooting.md) |
+| 多人协作 / 退出 stop 清理 / arthas 残留处理 | [多人协作与退出清理](multi-user.md) |
 | 加 JDK 版本、写 playbook、批量编排、tunnel 取舍 | [扩展与路线图](development.md) |
 
 ## 推荐路径
@@ -23,7 +24,8 @@
 
 | 文档 | 对应代码 |
 |---|---|
-| [脚本详解](scripts.md) | `tools/fetch.sh` `tools/probe-k8s.sh` `tools/attach-k8s.sh` `tools/attach-ephemeral.sh` |
+| [脚本详解](scripts.md) | `tools/fetch.sh` `tools/probe-k8s.sh` `tools/attach-k8s.sh` `tools/attach-ephemeral.sh` `tools/stop-arthas.sh` |
 | [加固场景处理](hardening.md) | 两 attach 脚本的架构判定 + 版本探测段；probe 的 6 项探测 |
 | [Arthas 实战](arthas-commands.md) | 不对应代码，是 arthas 控制台内的命令用法 |
+| [多人协作与退出清理](multi-user.md) | `tools/stop-arthas.sh` + 两 attach 脚本的端口透传/stop 提示 |
 | [排查手册](troubleshooting.md) | 跨所有脚本的症状 |
