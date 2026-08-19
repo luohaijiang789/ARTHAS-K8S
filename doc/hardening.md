@@ -9,33 +9,35 @@
 | 加固项 | 探测方法 | 对 attach 的影响 | 处理 |
 |---|---|---|---|
 | distroless（无 shell） | `command -v bash/sh/ash` | exec 模式废（没法 `kubectl exec -- sh`） | 路径 C（ephemeral 容器有 shell） |
-| JRE-only（无 attach API） | `lib/tools.jar`(8) / `bin/jcmd`(9+) | 容器 java 跑不起 arthas（缺 attach 模块） | 路径 C 或路径 A fallback（传完整 JDK） |
-| readOnlyRootFilesystem | Pod spec `securityContext` | /tmp 写不了，cp 的工具落不了地 | 路径 C（临时容器 rootFS 可写）；路径 A 待支持 emptyDir |
+| JRE-only（无 attach API） | `lib/tools.jar`(8) / `bin/jcmd`(9+) | 容器 java 跑不起 arthas（缺 attach 模块） | **有 shell→路径 A fallback 传完整 JDK**；无 shell（distroless）才路径 C |
+| readOnlyRootFilesystem | Pod spec `securityContext` | /tmp 写不了，cp 的工具落不了地 | **参与选路**：true→路径 C（临时容器 rootFS 可写）；false/未设→路径 A |
 | runAsNonRoot / runAsUser | Pod spec `securityContext` | 非 root 读 /proc、文件权限受限 | 路径 C 用 `--profile=sysadmin` 提权读 /proc |
 | 禁 attach 参数 | command/args 查 `-XX:+DisableAttachMechanism` | 应用层禁，attach 直接被拒 | 只能重启去参数（blocked） |
-| 准入禁 ephemeral | 试探性 `kubectl debug` | 路径 C 也废 | 协调准入或重启改镜像（blocked） |
+| 准入禁 ephemeral | 试探性 `kubectl debug` | 路径 C 也废 | 无 shell / 只读 rootFS 时退回 exec-direct 标风险；否则协调准入或重启改镜像（blocked） |
 
 ## 路径决策
 
-probe 综合 6 项给出三类建议：
+probe 综合 6 项给出三类建议。**优先 exec-direct**——有 shell + rootFS 可写就走 exec，JRE-only 靠 fallback 传本地 JDK，不必起 ephemeral。只有无 shell（distroless）或 readOnlyRootFS 才退到 ephemeral：
 
 ```
-有 shell?
-  ├─ 否 → ephemeral 允许?
-  │        ├─ 是 → ephemeral-container（路径 C）
-  │        └─ 否 → blocked（重启改镜像）
-  └─ 是 → JDK 还是 JRE?
-           ├─ JRE/none → ephemeral 允许?
-           │             ├─ 是 → ephemeral-container（路径 C，传 JDK）
-           │             └─ 否 → blocked（重启换 JDK）
-           └─ JDK → 禁 attach?
-                     ├─ 是 → blocked（重启去参数）
-                     └─ 否 → exec-direct（路径 A）
+禁 attach 参数?
+  └─ 是 → blocked（重启去参数，脚本帮不了）
+无 shell（distroless）?
+  ├─ ephemeral 允许 → ephemeral-container（路径 C）
+  └─ ephemeral 禁   → blocked（重启改镜像）
+有 shell + readOnlyRootFS?
+  ├─ ephemeral 允许 → ephemeral-container（路径 C，临时容器 rootFS 可写）
+  └─ ephemeral 禁   → exec-direct（标风险：/tmp 写不了，attach socket 可能失败）
+有 shell + rootFS 可写 → exec-direct（路径 A）
+  ├─ 容器有 JDK    → 用容器自己的 java 跑 arthas-boot
+  └─ 容器是 JRE/无 → fallback 传匹配本地 JDK 进去跑（JRE 缺 attach API）
 ```
 
-- **exec-direct**：有 shell + JDK + 未禁 attach + rootFS 可写 → 路径 A，用容器自己的 java
-- **ephemeral-container**：distroless 或 JRE-only，但 ephemeral 允许 → 路径 C，外部传 JDK
-- **blocked**：ephemeral 被禁 或 应用层禁 attach → 协调重启改镜像/参数（脚本帮不了，要改部署）
+- **exec-direct**：有 shell + rootFS 可写 + 未禁 attach → 路径 A。容器有 JDK 用容器 java；JRE-only / 无 java 靠 fallback 传匹配本地 JDK（**JRE 也要走 exec，不推 ephemeral**——JRE 缺 attach API，但传完整 JDK 进去就能 attach）
+- **ephemeral-container**：无 shell（distroless）或 readOnlyRootFS，且 ephemeral 允许 → 路径 C，外部传 JDK
+- **blocked**：应用层禁 attach；或无 shell / readOnlyRootFS 且 ephemeral 被禁 → 协调重启改镜像/参数（脚本帮不了，要改部署）
+
+> **为什么 JRE-only 不推 ephemeral**：JRE 缺 attach API（8 无 `tools.jar`、9+ 无 `jdk.attach` 模块），用 JRE 的 java 跑 arthas 会失败——但只要容器有 shell，传一个完整的匹配 JDK 进去跑就行，不必起 ephemeral。ephemeral 的成本（残留 `debugger-XXXX`、需 sysadmin profile、受限集群常被拒）只在该花时才花：无 shell 时。
 
 ## 架构判定（确保 arm/x86 不混）
 
@@ -164,6 +166,6 @@ probe 第 6 项（ephemeral 是否允许）会**真的创建一个 ephemeral 容
 
 本地 kind 集群已验证跨容器 attach 机制本身可通（glibc debian 临时容器 → distroless 目标 JVM，`sc -d`/`jad`/`getstatic` 全部成功）。剩余待真集群验证：
 
-1. **AttachListener UnixSocket 与 readOnlyRootFS**：arthas attach 走 `/tmp/.attach_pid<pid>` UnixSocket。临时容器和目标容器共享 process ns 但 rootFS 不同——socket 文件写在**谁的 /tmp**？readOnlyRootFS 目标写不了 /tmp 时是否仍能 attach？本地矩阵里 `app-readonly` 挂了 emptyDir:/tmp 故能过，真·只读（无 emptyDir）待验
+1. **AttachListener UnixSocket 与 readOnlyRootFS**：arthas attach 走 `/tmp/.attach_pid<pid>` UnixSocket。readOnlyRootFS 目标写不了 /tmp——probe 已把这种情况判路径 C（临时容器 rootFS 可写，socket 写在临时容器）。但若 ephemeral 也被禁、被迫走 exec-direct（probe 会标风险），socket 写不了仍会失败。**空 emptyDir 挂载 /tmp** 能救这种情况（待支持）
 2. **`--profile=sysadmin` 可用性**：本地 kind 节点 privileged 全过；受限托管集群（GKE/EKS + PSP/准入）可能禁 sysadmin profile，需放宽或换 nsenter 方式
 3. **aarch64 双架构**：本地 x64 测不了，需 ARM 节点（如 Oracle Cloud 免费 ARM）

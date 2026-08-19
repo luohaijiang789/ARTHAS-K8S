@@ -68,10 +68,12 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 **合并 exec 探测**：shell + java 路径 + JDK/JRE 判定合并到一个 `sh -c '...'` 块，输出多行带标记（`shell=`/`java_path=`/`java_kind=`），外层 sed 解析。旧版 3 次 exec。
 
-**JDK/JRE 判定**：
+**JDK/JRE 判定**（参与选路，不只展示）：
 - JDK 8：`<javahome>/lib/tools.jar` 存在
 - JDK 9+：`<javahome>/bin` 下有 `jcmd`/`jstack`/`jmap`
 - 否则 JRE
+
+**选路优先 exec-direct**：有 shell + rootFS 可写就走 exec（JRE-only 靠 attach-k8s 的 fallback 传本地 JDK，不推 ephemeral）。只有无 shell（distroless）或 readOnlyRootFS 才退 ephemeral。详见 [加固处理 · 路径决策](hardening.md#路径决策)。
 
 **ephemeral 试探安全**：见 [加固处理 · probe 的试探安全性](hardening.md#probe-的试探安全性)——先查已有 ephemeral、带 sysadmin profile、清理只删本次产生。
 
@@ -90,10 +92,10 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 ```
 依赖检查 → 选 pod（awk 匹配 + 交互）→ tab 分隔取 ns/pod
 → uname -m 识别架构（归一 x64/aarch64）→ trap 清理 /tmp
-→ 探测容器 java（command -v，不在 PATH 则 /proc/cmdline 找）
+→ 探测容器 java + 判 JDK/JRE（command -v，不在 PATH 则 /proc/cmdline 找）
 → cp arthas dist（源比 tar 新则重打）→ 解压
-→ 有 java：用容器 java 跑 boot
-  无 java：三道探测版本 → cp 匹配 JDK → 用传入 JDK 跑 boot
+→ 容器有 JDK：用容器 java 跑 boot
+  容器无 java 或是 JRE：三道探测版本 → cp 匹配 JDK → 用传入 JDK 跑 boot
 → 退出 trap 清理 /tmp 残留
 ```
 
@@ -107,7 +109,7 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 
 **/proc/<pid>/cmdline 找 java**：容器 java 不在 PATH 时，遍历 `/proc/[0-9]*/cmdline`，找含 `java` 的进程，取其 argv[0]（二进制路径）。cmdline 是 `\0` 分隔，`tr "\0" " "` 转空格后 `set -- $c; echo $1`。
 
-**三道版本探测 fallback**：容器无 java（JRE-only 或不在 PATH）时，在容器内跑三道探测（release → class major → bin -version，见 [加固处理](hardening.md#版本探测三道降级)）定版本，cp 匹配 `jdk-<v>-<arch>` 进去跑。探测失败默认 17 + 日志。
+**三道版本探测 fallback**：容器无 java 或是 JRE（探测到 java 后判 JDK/JRE，JRE 缺 attach API）时，在容器内跑三道探测（release → class major → bin -version，见 [加固处理](hardening.md#版本探测三道降级)）定版本，cp 匹配 `jdk-<v>-<arch>` 进去跑。探测失败默认 17 + 日志。JDK/JRE 判定逻辑与 probe 一致（合并进一次 exec）。
 
 **/tmp 清理 trap**：`trap cleanup_tmp EXIT` 退出时删容器内 `/tmp/arthas-dist.tar.gz` 和 `/tmp/jdk-fallback.tar.gz`。旧版无清理，可写 FS 残留 200M+。
 
@@ -199,7 +201,9 @@ stop-arthas.sh 要读标记拿端口（agent 不在默认 3658），stop 后删�
 
 **删标记幂等**：agent 已不存在时 stop 会失败，但删标记仍执行（幂等，不报错）。
 
-**仅处理容器有 java 的 pod + 路径 A 标记**：读 `/tmp/arthas-port-<pid>`（容器内，路径 A 写的标记）。**路径 C 的标记写在 `/proc/<pid>/root/tmp/`（目标容器 rootFS），本脚本清不到**——路径 C 残留的清理：用 `attach-ephemeral.sh` 重新 attach（它会读路径 C 标记、复用 agent），然后在 arthas 控制台手动 `stop`；或 `kubectl delete pod` 重启。distroless/JRE-only（容器无 java）同样走这两条。
+**仅处理容器有 java 的 pod + 路径 A 标记**：读 `/tmp/arthas-port-<pid>`（容器内，路径 A 写的标记）。**路径 C 的标记写在 `/proc/<pid>/root/tmp/`（目标容器 rootFS），本脚本清不到**——路径 C 残留的清理：用 `attach-ephemeral.sh` 重新 attach（它会读路径 C 标记、复用 agent），然后在 arthas 控制台手动 `stop`；或 `kubectl delete pod` 重启。distroless（容器无 java）同样走这两条。
+
+**JRE-only 走 exec-direct 的场景**：attach-k8s.sh 传的 JDK 解压在容器 `/tmp/jdk-<v>-<arch>/`（cleanup 只删 tar 不删解压目录），stop-arthas.sh 探测到容器是 JRE 时会找这个遗留 JDK 复用发 stop。若该 JDK 也被清了，stop 退化为"提示 delete pod 重启"。
 
 **何时用**：做过 redefine/watch/trace 想干净释放；agent 状态异常想重置；标记端口失效连不上时清理。详见 [多人协作与退出清理](multi-user.md)。
 

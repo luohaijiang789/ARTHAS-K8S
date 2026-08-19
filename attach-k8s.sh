@@ -6,7 +6,8 @@
 #   - arthas 4.3.4（arthas/dist，完整离线 jar）
 #   - 自动匹配目标 JVM 版本：优先用容器内 java 跑 arthas-boot（传输 ~17M，非 ~100M+）
 #   - 容器 java 不在 PATH 时，从 /proc/<pid>/cmdline 找 java 二进制路径
-#   - fallback：容器无 java（JRE-only/java 不在 PATH）时传匹配版本+架构 JDK 进去跑
+#   - fallback：容器无 java（JRE-only/java 不在 PATH）或容器是 JRE（无 attach API）
+#       时，传匹配版本+架构 JDK 进去跑（JRE 的 java 跑 arthas 会缺 tools.jar/jdk.attach）
 #   - distroless（无 shell）→ 报错提示走路径 C ephemeral
 #   - 用 sh -c 探测（兼容 alpine/busybox 等无 bash 容器）；退出清理 /tmp 残留
 #
@@ -64,17 +65,37 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
-# ---- 探测容器内 java（用 sh -c，兼容 alpine/busybox 等无 bash 容器）----
-# 1) 优先 command -v java（在 PATH）
-container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c 'command -v java 2>/dev/null || true' 2>/dev/null || true)
-# 2) 不在 PATH → 从 /proc 找 java 进程的二进制路径
-if [ -z "$container_java" ]; then
-  container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c '
+# ---- 探测容器内 java + JDK/JRE 判定（用 sh -c，兼容 alpine/busybox 等无 bash 容器）----
+# 1) 优先 command -v java（在 PATH）；2) 不在 PATH → 从 /proc 找 java 进程的二进制路径
+# 拿到 java 后判 JDK/JRE：JRE 缺 attach API（8 无 tools.jar、9+ 无 jdk.attach 模块），
+# 跑 arthas-boot 会失败 → JRE 时置空 container_java，落入下方 fallback 传完整本地 JDK。
+# （与 probe-k8s.sh 的 JDK/JRE 判定一致，合并一次 exec 省 round-trip。）
+container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c '
+  java_path=$(command -v java 2>/dev/null)
+  if [ -z "$java_path" ]; then
     for p in /proc/[0-9]*; do
       c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
-      case "$c" in *java*) set -- $c; printf "%s" "$1"; break ;; esac
+      case "$c" in *java*) set -- $c; java_path=$1; break ;; esac
     done
-  ' 2>/dev/null || true)
+  fi
+  [ -z "$java_path" ] && { echo "java_kind=none"; exit 0; }
+  echo "java_path=$java_path"
+  real=$(readlink -f "$java_path" 2>/dev/null || echo "$java_path")
+  jh=$(dirname "$(dirname "$real")")
+  if [ -f "$jh/lib/tools.jar" ]; then echo "java_kind=JDK8"
+  elif ls "$jh/bin" 2>/dev/null | grep -qE "^(jcmd|jstack|jmap)$"; then echo "java_kind=JDK9plus"
+  else echo "java_kind=JRE"
+  fi
+' 2>/dev/null || true)
+# 解析探测输出
+java_path=$(printf '%s\n' "$container_java" | sed -n 's/^java_path=//p')
+java_kind=$(printf '%s\n' "$container_java" | sed -n 's/^java_kind=//p')
+# JRE / none / 探测失败 → 无可用容器 java，走 fallback 传本地 JDK
+if [ "$java_kind" = "JRE" ] || [ -z "$java_path" ]; then
+  [ "$java_kind" = "JRE" ] && log_info "容器是 JRE（无 attach API），fallback 传完整本地 JDK"
+  container_java=""
+else
+  container_java="$java_path"
 fi
 
 # ---- 传输 arthas dist（源比 tar 新则重新打包，避免复用旧版本）----
@@ -93,11 +114,11 @@ if [ -n "$container_java" ]; then
   log_info "using container java: $container_java  ($jver)"
   RUN_JAVA="$container_java"
 else
-  # 容器无 java 在 PATH：JRE-only（无 attach API）或 java 不在 PATH
+  # container_java 为空：容器是 JRE（无 attach API）或无 java / 不在 PATH
   # fallback：传匹配本地 JDK 进去跑。版本探测三道降级：
   #   1) release 文件  2) 目标 jar class major version  3) 跑 bin -version
   #   失败默认 17（打 FALLBACK 日志）。容器有 shell 能跑 sh，故探测在容器内做。
-  log_info "container java 不在 PATH，fallback：探测版本 + 传匹配本地 JDK"
+  log_info "fallback：探测版本 + 传匹配本地 JDK"
   tgt_ver=$(kubectl exec -n "$ns" "$podname" -- sh -c '
     for p in /proc/[0-9]*; do
       c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)

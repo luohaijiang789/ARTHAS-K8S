@@ -114,17 +114,29 @@ probe_one() {  # ns pod -> 6 探测结果（路径写入全局 PROBE_PATH）
   fi
 
   # ---- 选路 ----
+  # 优先 exec-direct：有 shell + rootFS 可写就走 exec（JRE-only 也靠 fallback 传本地 JDK，
+  # 不必起 ephemeral）。只有无 shell（distroless）或 readOnlyRootFS（/tmp 写不了工具落不了地）
+  # 才退到 ephemeral。详见 doc/hardening.md 路径决策树。
+  # rootfs 规整：jq 未设时返回 "false(未设)"，统一按"可写"处理（只有显式 true 才判只读）。
+  local rootfs_readonly="no"
+  [ "$rootfs" = "true" ] && rootfs_readonly="yes"
+
   local path
-  if [ "$has_shell" = "no" ]; then
+  if [ "$attach_param" != "ok" ]; then
+    path="blocked(应用层禁 attach，需重启去掉参数)"
+  elif [ "$has_shell" = "no" ]; then
     if [ "$ephemeral_ok" = "yes" ]; then path="ephemeral-container"
     else path="blocked(无 shell 且 ephemeral 被禁，需重启改镜像)"; fi
-  elif [ "$java_kind" = "JRE" ] || [ "$java_kind" = "none" ]; then
-    if [ "$ephemeral_ok" = "yes" ]; then path="ephemeral-container(传 JDK 进 debug 容器)"
-    else path="blocked(JRE-only 且 ephemeral 被禁，需重启换 JDK 或改参数)"; fi
-  elif [ "$attach_param" != "ok" ]; then
-    path="blocked(应用层禁 attach，需重启去掉参数)"
+  elif [ "$rootfs_readonly" = "yes" ]; then
+    if [ "$ephemeral_ok" = "yes" ]; then path="ephemeral-container(只读 rootFS，临时容器 rootFS 可写)"
+    else path="exec-direct(标 readOnlyRootFS 风险：/tmp 写不了，attach socket 可能失败)"; fi
   else
-    path="exec-direct(容器 java 跑 arthas-boot)"
+    # 有 shell + rootFS 可写：走 exec-direct。有 JDK 用容器 java，JRE/none 靠 fallback 传本地 JDK。
+    if [ "$java_kind" = "JDK8" ] || [ "$java_kind" = "JDK9plus" ]; then
+      path="exec-direct(容器 java 跑 arthas-boot)"
+    else
+      path="exec-direct(容器 JRE/无可用 java，fallback 传匹配本地 JDK)"
+    fi
   fi
   PROBE_PATH="$path"
 

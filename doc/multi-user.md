@@ -22,7 +22,7 @@
 
 ## 路径 C 真集群实测（2026-08-18，kind v1.31 + distroless pod）
 
-上面的端口/agent 行为是本地起 JVM 测的；路径 C（ephemeral 容器 attach distroless/JRE-only）的多用户在真集群首次验证。本地 kind 集群起的 distroless pod（无 shell，纯路径 C）上跑 A/B 两个用户，4 项断言全过：
+上面的端口/agent 行为是本地起 JVM 测的；路径 C（ephemeral 容器 attach distroless）的多用户在真集群首次验证。本地 kind 集群起的 distroless pod（无 shell，纯路径 C）上跑 A/B 两个用户，4 项断言全过：
 
 | 断言 | 结果 | 证据 |
 |---|---|---|
@@ -151,7 +151,7 @@ bash stop-arthas.sh order-service
 - agent 状态异常想重置
 - 路径 A 的标记端口失效连不上时清理
 
-> **边界**：stop-arthas.sh 只处理**容器有 java 的 pod + 路径 A 标记**（`/tmp/arthas-port-<pid>`）。**路径 C 的标记在 `/proc/<pid>/root/tmp/`（目标容器 rootFS），本脚本清不到**——路径 C 残留清理：用 `attach-ephemeral.sh` 重新 attach（它会读路径 C 标记、复用已有 agent），在 arthas 控制台手动 `stop`；或 `kubectl delete pod` 重启。distroless/JRE-only（容器无 java）同走这两条。
+> **边界**：stop-arthas.sh 只处理**容器有可用 java 的 pod + 路径 A 标记**（`/tmp/arthas-port-<pid>`）。**路径 C 的标记在 `/proc/<pid>/root/tmp/`（目标容器 rootFS），本脚本清不到**——路径 C 残留清理：用 `attach-ephemeral.sh` 重新 attach（它会读路径 C 标记、复用已有 agent），在 arthas 控制台手动 `stop`；或 `kubectl delete pod` 重启。distroless（容器无 java）同走这两条。JRE-only 有 shell 走 exec-direct 时，stop 能用 attach 时传进来的遗留 JDK（`/tmp/jdk-<v>-<arch>/`）复用发 stop。
 
 > ⚠ stop-arthas.sh 的 `-c stop` 对残留 agent 的清理有效性，依赖 arthas "attach 到已有 agent 的 JVM 会连上它"——已实测确认（同端口二次 attach 连到已有 agent 并成功 stop）。
 

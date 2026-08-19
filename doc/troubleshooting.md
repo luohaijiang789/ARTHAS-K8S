@@ -48,10 +48,10 @@
 | `no running pod matched` | flag 无 Running pod 命中 | 同 probe |
 | `exec: bash: not found` | 容器无 bash（alpine/busybox） | 脚本已用 `sh -c`；若仍报说明容器连 sh 都没有（distroless），走路径 C |
 | `arch=<X> 未识别，按 x64 处理` | `uname -m` 返回非标准值 | 确认节点真实架构；aarch64 节点被误判 x64 会 attach 失败，用路径 C（节点 label 更可靠） |
-| `attach fail: tools.jar not found` | 容器是 JRE 不是 JDK（JDK8） | 脚本自动 fallback 传匹配 JDK；fallback 失败走路径 C |
+| `attach fail: tools.jar not found` | 容器是 JRE 不是 JDK（JDK8） | 脚本探测到 JRE 自动 fallback 传匹配 JDK（不推路径 C） |
 | `Could not find tools.jar` / `No such file` (9+) | JRE 缺 `jdk.attach` 模块 | 同上，fallback 传完整 JDK |
 | `无法识别目标 JVM 版本` 且容器无 java | 三道探测都失败（distroless 无 /proc 信息） | 走路径 C；或确认目标确实有 java 进程 |
-| 版本探测误判（用 17 attach 8 失败） | jlink 无 release 文件 + 无可读 jar | 三道探测有 class major 兜底；仍误判用 `--jdk=8` 强制（路径 C 支持，路径 A 需走 C） |
+| 版本探测误判（用 17 attach 8 失败） | jlink 无 release 文件 + 无可读 jar | 三道探测有 class major 兜底；路径 A 探测失败默认 17 后无 `--jdk=` 强制（待加），需强制版本走路径 C |
 | kubectl 连错集群 | sudo 丢 KUBECONFIG | 不用 sudo；或 `sudo -E` 保留环境；确认 `~/.kube/config` |
 | 容器 /tmp 残留 | 旧版无清理 | 已修，`trap` 退出清理；若仍残留手动 `kubectl exec -- rm /tmp/arthas-*` |
 | `attach timed out` | `Unattachable` 或 `-XX:+DisableAttachMechanism` | probe 第 5 项应提前发现；需重启去参数（blocked） |

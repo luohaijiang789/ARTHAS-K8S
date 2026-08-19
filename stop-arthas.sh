@@ -11,6 +11,8 @@
 # 路径 C 的标记在 /proc/<pid>/root/tmp/（目标容器 rootFS），本脚本清不到——
 # 路径 C 残留清理：用 attach-ephemeral.sh 重新 attach（读路径 C 标记复用 agent）
 # 后手动 stop，或 kubectl delete pod 重启。
+# JRE-only 走 exec-direct + 传 JDK 时：attach-k8s.sh 的 cleanup 只删 tar 不删
+# 解压目录，故 /tmp/jdk-<v>-<arch>/bin/java 仍在，stop 复用它发 stop。
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -50,20 +52,36 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
-# 探测容器 java（command -v，不在 PATH 则 /proc 找）
-container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c 'command -v java 2>/dev/null || true' 2>/dev/null || true)
-if [ -z "$container_java" ]; then
-  container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c '
+# 探测容器 java（command -v，不在 PATH 则 /proc 找）+ 判 JDK/JRE。
+# JRE 缺 attach API 跑不了 arthas-boot 发 stop → 找 /tmp/jdk-*/bin/java（attach-k8s.sh
+# fallback 传的 JDK 解压后留在此，cleanup 只删 tar 不删解压目录，故 stop 能复用）。
+container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c '
+  jp=$(command -v java 2>/dev/null)
+  if [ -z "$jp" ]; then
     for p in /proc/[0-9]*; do
       c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
-      case "$c" in *java*) set -- $c; printf "%s" "$1"; break ;; esac
+      case "$c" in *java*) set -- $c; jp=$1; break ;; esac
     done
-  ' 2>/dev/null || true)
-fi
+  fi
+  [ -z "$jp" ] && { echo "java_kind=none"; exit 0; }
+  echo "java_path=$jp"
+  real=$(readlink -f "$jp" 2>/dev/null || echo "$jp")
+  jh=$(dirname "$(dirname "$real")")
+  if [ -f "$jh/lib/tools.jar" ]; then echo "java_kind=JDK8"
+  elif ls "$jh/bin" 2>/dev/null | grep -qE "^(jcmd|jstack|jmap)$"; then echo "java_kind=JDK9plus"
+  else
+    # 容器是 JRE：找 attach-k8s.sh fallback 传的 JDK（/tmp/jdk-*/bin/java）
+    fb=$(ls /tmp/jdk-*/bin/java 2>/dev/null | head -1)
+    if [ -n "$fb" ]; then echo "java_kind=FALLBACK_JDK"; echo "java_path=$fb"
+    else echo "java_kind=JRE"; fi
+  fi
+' 2>/dev/null || true)
+java_kind=$(printf '%s\n' "$container_java" | sed -n 's/^java_kind=//p')
+container_java=$(printf '%s\n' "$container_java" | sed -n 's/^java_path=//p')
 
-if [ -z "$container_java" ]; then
-  log_error "容器无 java（distroless/JRE-only），本脚本仅处理路径 A 标记，清不了路径 C"
-  log_warn "路径 C 残留清理：bash attach-ephemeral.sh '$FLAG' 重新 attach 后输入 stop；或 kubectl delete pod -n $ns $podname 重建"
+if [ -z "$container_java" ] || [ "$java_kind" = "JRE" ]; then
+  log_error "容器无可用 java（distroless 无 java，或 JRE 且无遗留 fallback JDK）"
+  log_warn "路径 C 残留：bash attach-ephemeral.sh '$FLAG' 重新 attach 后输入 stop；或 kubectl delete pod -n $ns $podname 重建"
   exit 1
 fi
 

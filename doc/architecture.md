@@ -97,6 +97,6 @@ tabby / CodeQL    →    arthas watch/trace    →    redefine 打补丁验证
 
 不是"会跑 arthas"——arthas 谁都会跑。是**在企业级加固环境下还能把 arthas 送进真实 JVM**：
 
-distroless 无 shell、JRE-only 无 attach API、readOnlyRootFS 写不了 /tmp、非 root 读不了 /proc、`-XX:+DisableAttachMechanism` 应用层禁 attach、准入策略禁 exec/ephemeral……任何一条都让"用容器 java 跑 arthas"失效。
+distroless 无 shell、JRE-only 无 attach API（需传完整 JDK）、readOnlyRootFS 写不了 /tmp、非 root 读不了 /proc、`-XX:+DisableAttachMechanism` 应用层禁 attach、准入策略禁 exec/ephemeral……任何一条都让"用容器 java 跑 arthas"失效。
 
 底座的核心价值是 **probe 摸底 → 选路 → 匹配版本架构 JDK 送进去**这条链。这条链怎么处理每一种加固，见 [加固场景处理](hardening.md)；链里每个脚本怎么跑，见 [脚本详解](scripts.md)。

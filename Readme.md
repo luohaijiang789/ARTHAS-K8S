@@ -82,15 +82,18 @@ bash probe-k8s.sh --csv <pod-flag>       # CSV 清单（百来个服务批量排
 | 探测项 | 方法 | 判定意义 |
 |---|---|---|
 | 有无 shell | `command -v bash/sh/ash` | distroless 无 shell → exec 废，必须 ephemeral |
-| JDK 还是 JRE | `lib/tools.jar`(8) / `bin/jcmd`(9+) | JRE-only 无 attach API |
-| readOnlyRootFS | Pod spec | 只读 → /tmp 写不了 |
+| JDK 还是 JRE | `lib/tools.jar`(8) / `bin/jcmd`(9+) | JRE 缺 attach API，但**有 shell 时传 JDK 进去就行**，不必 ephemeral |
+| readOnlyRootFS | Pod spec | **参与选路**：只读 → /tmp 写不了 → 路径 C |
 | runAsNonRoot/runAsUser | Pod spec | 非 root → /proc 受限 |
 | 禁 attach | command/args 查 `-XX:+DisableAttachMechanism` | 应用层禁 → 只能重启去参数 |
-| ephemeral 允许 | 试探性 `kubectl debug --profile=sysadmin` 后清理 | 被准入禁 → 两路都断 |
+| ephemeral 允许 | 试探性 `kubectl debug --profile=sysadmin` 后清理 | 被准入禁 → 无 shell/只读 rootFS 时退回 exec 标风险 |
 
-- **exec-direct**：有 shell + JDK + 未禁 attach + rootFS 可写 → 走**路径 A**
-- **ephemeral-container**：distroless 或 JRE-only，但 ephemeral 允许 → 走**路径 C**
-- **blocked**：ephemeral 被禁 或 应用层禁 attach → 协调重启改镜像/参数
+- **exec-direct**：有 shell + rootFS 可写 + 未禁 attach → 走**路径 A**（容器有 JDK 用容器 java；JRE-only/无 java 靠 fallback 传本地 JDK）
+- **ephemeral-container**：无 shell（distroless）或 readOnlyRootFS，且 ephemeral 允许 → 走**路径 C**
+- **blocked**：应用层禁 attach；或无 shell/只读 rootFS 且 ephemeral 被禁 → 协调重启改镜像/参数
+
+> **JRE-only 不推 ephemeral**：JRE 缺 attach API，但容器有 shell 时传完整 JDK 进去即可 attach——不必起 ephemeral。ephemeral 只在 distroless（无 shell）才必须。
+
 
 百来个服务摸完得到一张清单，再批量操作。
 
@@ -102,9 +105,9 @@ bash probe-k8s.sh --csv <pod-flag>       # CSV 清单（百来个服务批量排
 bash attach-k8s.sh <pod-flag>
 ```
 
-用容器自己的 java 跑 arthas-boot，传 17M dist。流程：选 pod → `uname -m` 识别架构 → 探测容器内 java（`command -v java`，不在 PATH 则从 `/proc/<pid>/cmdline` 找）→ `kubectl cp` 传 dist → 用容器 java 跑 boot。退出 `trap` 清理 `/tmp` 残留。
+用容器自己的 java 跑 arthas-boot，传 17M dist。流程：选 pod → `uname -m` 识别架构 → 探测容器内 java + 判 JDK/JRE（`command -v java`，不在 PATH 则从 `/proc/<pid>/cmdline` 找）→ `kubectl cp` 传 dist → 用容器 java 跑 boot。退出 `trap` 清理 `/tmp` 残留。
 
-> 容器无 java 时自动 fallback：三道探测版本 + 传匹配 `jdk-<v>-<arch>` 进去跑（见[加固场景](#加固场景如何处理)）。
+> 容器无 java 或是 JRE（缺 attach API）时自动 fallback：三道探测版本 + 传匹配 `jdk-<v>-<arch>` 进去跑（见[加固场景](#加固场景如何处理)）。**JRE-only 加固 pod 有 shell 时也走此路，不必 ephemeral**。
 > 不强制 root：kubectl 靠 `~/.kube/config`，sudo 反而丢上下文。
 
 #### 路径 B：本机或已知 pid 直接 attach
@@ -251,9 +254,11 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 
 | pod 加固情况 | probe 判定 | 走哪条 |
 |---|---|---|
-| 有 shell + JDK + 未禁 attach + rootFS 可写 | exec-direct | 路径 A |
-| distroless / JRE-only / readOnlyRootFS，但 ephemeral 允许 | ephemeral-container | 路径 C |
-| ephemeral 被禁 或 应用层禁 attach | blocked | 协调重启改镜像/参数 |
+| 有 shell + rootFS 可写 + 未禁 attach（容器有 JDK 或 JRE/无 java） | exec-direct | 路径 A（JRE/无 java 靠 fallback 传本地 JDK） |
+| 无 shell（distroless）或 readOnlyRootFS，但 ephemeral 允许 | ephemeral-container | 路径 C |
+| 应用层禁 attach；或无 shell/只读 rootFS 且 ephemeral 被禁 | blocked | 协调重启改镜像/参数 |
+
+> **JRE-only 有 shell → exec-direct 不推 ephemeral**：JRE 缺 attach API，但传完整 JDK 进去就能 attach。只有 distroless（无 shell）才必须 ephemeral。
 
 ---
 
@@ -261,7 +266,7 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `attach fail: tools.jar not found` | 容器是 JRE 不是 JDK（8 需 tools.jar） | 路径 A fallback 自动传匹配 JDK；或走路径 C |
+| `attach fail: tools.jar not found` | 容器是 JRE 不是 JDK（8 需 tools.jar） | 路径 A 探测到 JRE 自动 fallback 传匹配 JDK（不推 ephemeral） |
 | `Could not find tools.jar` / `No such file` (9+) | JRE 缺 `jdk.attach` 模块 | 同上，传完整 JDK |
 | exec 报 `exec: bash: not found` | distroless 无 shell | 走路径 C |
 | `attach timed out` | `Unattachable` 或加了 `-XX:+DisableAttachMechanism` | 重启去掉该参数（自管服务可做） |
@@ -285,7 +290,9 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 **待做**：
 - [ ] 受限托管集群（GKE/EKS + PSP）试跑 `--profile=sysadmin` 可用性
 - [ ] aarch64 双架构真机试跑（本地 x64 测不了，需 ARM 节点）
-- [ ] attach-k8s.sh fallback：readOnlyRootFS 走 emptyDir（当前只处理 JRE-only）
+- [ ] attach-k8s.sh readOnlyRootFS 走 emptyDir（当前 readOnlyRootFS 判路径 C；但 ephemeral 也被禁时退 exec-direct 会因 socket 写不了 /tmp 失败，emptyDir 挂 /tmp 能救）
+- [ ] attach-k8s.sh 加 `--jdk=` 参数解析（路径 A 探测失败默认 17 后无法强制版本，路径 C 有 `--jdk=`）
+- [ ] 路径 A 真集群验证 JRE-only 加固 pod：有 shell 时走 exec-direct + 传 JDK 成功 attach
 - [ ] 批量编排 + 逐类漏洞验证 playbook（probe 清单 → 批量 attach 跑 playbook → 归档报告）——把单条手工 attach 变成百来个服务批量实证闭环
 - [ ] tunnel-server 集中管理（零侵入下收益有限，优先级低于批量编排）
 

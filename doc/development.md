@@ -152,7 +152,8 @@ probe --csv <flag> → 清单按 path 分类
 本地覆盖不了的：
 
 - `--profile=sysadmin` 在**受限托管集群**（GKE/EKS + PSP/准入）可用性
-- readOnlyRootFS **无 emptyDir** 时 attach socket 写位置
+- readOnlyRootFS（无 emptyDir）时：probe 已判路径 C（临时容器 rootFS 可写写 socket）；若 ephemeral 也被禁退 exec-direct，socket 写不了 /tmp 仍会失败，待 emptyDir 支持
+- 路径 A 真集群验证 JRE-only 加固 pod：有 shell 时走 exec-direct + 传 JDK 成功 attach
 - aarch64 双架构路径（需 ARM 节点，如 Oracle Cloud 免费 ARM）
 - 跨节点 cp 大 JDK 耗时（本地单节点不具代表性）
 
