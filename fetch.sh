@@ -15,10 +15,55 @@ CACHE="$ROOT/cache"
 MANIFEST="$ROOT/MANIFEST.txt"
 mkdir -p "$JDK_DIR" "$DIST_DIR" "$CACHE"
 
-# ---- 依赖检查（旧版无检查，缺失时报原始错不友好）----
-for d in curl jq tar unzip sha256sum awk readelf; do
-  command -v "$d" >/dev/null || { echo "missing dependency: $d (请安装后重跑)"; exit 1; }
+# ---- 依赖检查：一次性全检测，缺失的攒齐再提示一键安装（不再缺一个拦一次）----
+DEPS=(curl jq tar unzip sha256sum awk readelf)
+missing=()
+for d in "${DEPS[@]}"; do
+  command -v "$d" >/dev/null || missing+=("$d")
 done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "❌ 缺失依赖: ${missing[*]}"
+  echo ""
+  # 识别发行版，给对应的一键安装命令（只打印，不自动执行——装包要 root 且改系统，你来决定）
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+  else
+    ID="unknown"
+  fi
+  case "$ID" in
+    debian|ubuntu)
+      echo "一键安装（复制执行）："
+      echo "  sudo apt-get update && sudo apt-get install -y ${missing[*]}"
+      ;;
+    euleros|centos|rhel|fedora|rocky|almalinux|anolis)
+      # sha256sum 在 coreutils、readelf 在 binutils，EulerOS 源可能没有 jq（用静态二进制）
+      yum_pkgs=()
+      for m in "${missing[@]}"; do
+        case "$m" in
+          jq) echo "  ⚠ $ID 源常无 jq 包，下静态二进制：" ; echo "     curl -fsSL -o /usr/local/bin/jq https://github.com/jqlang/jq/releases/latest/download/jq-linux-amd64 && chmod +x /usr/local/bin/jq" ;;
+          sha256sum) yum_pkgs+=(coreutils) ;;
+          readelf)   yum_pkgs+=(binutils) ;;
+          *)         yum_pkgs+=("$m") ;;
+        esac
+      done
+      if [ "${#yum_pkgs[@]}" -gt 0 ]; then
+        echo "一键安装（复制执行）："
+        echo "  sudo yum install -y ${yum_pkgs[*]}"
+      fi
+      ;;
+    alpine)
+      echo "一键安装（复制执行）："
+      echo "  sudo apk add ${missing[*]}"
+      ;;
+    *)
+      echo "请手动安装: ${missing[*]}"
+      echo "  （apt-get / yum / apk 按你的发行版选；jq 可用静态二进制：https://github.com/jqlang/jq/releases/latest）"
+      ;;
+  esac
+  echo ""
+  echo "装完重跑: bash fetch.sh"
+  exit 1
+fi
 
 # 动态获取最新 Arthas 版本（从 maven metadata）；可设 ARTHAS_VERSION 环境变量覆盖
 AR_VERSION_DEFAULT="4.3.4"  # 后备默认版本
