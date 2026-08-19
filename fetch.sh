@@ -20,7 +20,22 @@ for d in curl jq tar unzip sha256sum awk readelf; do
   command -v "$d" >/dev/null || { echo "missing dependency: $d (请安装后重跑)"; exit 1; }
 done
 
-AR_VERSION="4.3.4"
+# 动态获取最新 Arthas 版本（从 maven metadata）；可设 ARTHAS_VERSION 环境变量覆盖
+AR_VERSION_DEFAULT="4.3.4"  # 后备默认版本
+if [[ -n "${ARTHAS_VERSION:-}" ]]; then
+  AR_VERSION="$ARTHAS_VERSION"
+  echo "使用指定版本 (ARTHAS_VERSION): $AR_VERSION"
+else
+  AR_METADATA_URL="https://maven.aliyun.com/repository/public/com/taobao/arthas/arthas-packaging/maven-metadata.xml"
+  AR_METADATA=$(curl -fsL --retry 2 "$AR_METADATA_URL" 2>/dev/null || true)
+  AR_VERSION=$(echo "$AR_METADATA" | grep -oP '<release>\K[^<]+' | head -1)
+  if [[ -z "$AR_VERSION" ]]; then
+    echo "warn: 无法获取最新版本号，使用默认版本 $AR_VERSION_DEFAULT" >&2
+    AR_VERSION="$AR_VERSION_DEFAULT"
+  else
+    echo "检测到最新 Arthas 版本: $AR_VERSION"
+  fi
+fi
 AR_ZIP_URL="https://maven.aliyun.com/repository/public/com/taobao/arthas/arthas-packaging/${AR_VERSION}/arthas-packaging-${AR_VERSION}-bin.zip"
 AR_ZIP_SHA_URL="https://repo1.maven.org/maven2/com/taobao/arthas/arthas-packaging/${AR_VERSION}/arthas-packaging-${AR_VERSION}-bin.zip.sha256"
 AR_BOOT_URL="https://arthas.aliyun.com/arthas-boot.jar"
