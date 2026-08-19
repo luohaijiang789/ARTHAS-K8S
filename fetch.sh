@@ -81,6 +81,7 @@ else
     echo "检测到最新 Arthas 版本: $AR_VERSION"
   fi
 fi
+
 AR_ZIP_URL="https://maven.aliyun.com/repository/public/com/taobao/arthas/arthas-packaging/${AR_VERSION}/arthas-packaging-${AR_VERSION}-bin.zip"
 AR_ZIP_SHA_URL="https://repo1.maven.org/maven2/com/taobao/arthas/arthas-packaging/${AR_VERSION}/arthas-packaging-${AR_VERSION}-bin.zip.sha256"
 AR_BOOT_URL="https://arthas.aliyun.com/arthas-boot.jar"
@@ -166,20 +167,45 @@ else
 fi
 BOOT_SHA=$(sha256sum "$ARTHAS_DIR/arthas-boot.jar" | awk '{print $1}')
 
-echo "===== JDKs (Tsinghua TUNA Adoptium mirror, linux/x64 + aarch64) ====="
+echo "===== JDKs (Tsinghua TUNA Adoptium mirror) ====="
 : > "$MANIFEST"
 printf "arthas\tboot\t%s\t%s\n" "$AR_VERSION" "$BOOT_SHA" >> "$MANIFEST"
 printf "arthas\tdist-zip\t%s\t%s\n" "$AR_VERSION" "$ZIP_SHA" >> "$MANIFEST"
 
+# ---- 选 JDK 版本 + 架构（交互式；回车=全选/both）----
+# 不必每次下全部 8 个 JDK（~1.6G）。操作节点常只关心特定架构/版本，按需下省时省地。
+ALL_VERSIONS=(8 11 17 21)
+echo "可选 JDK 版本: ${ALL_VERSIONS[*]}"
+read -rp "输入要下的版本（空格分隔，回车=全选）: " vinput
+if [ -z "$vinput" ]; then
+  SEL_VERSIONS=("${ALL_VERSIONS[@]}")
+else
+  SEL_VERSIONS=()
+  for v in $vinput; do
+    case "$v" in 8|11|17|21) SEL_VERSIONS+=("$v") ;; *) echo "  忽略非法版本: $v" ;; esac
+  done
+  [ "${#SEL_VERSIONS[@]}" -eq 0 ] && { echo "无有效版本，退出"; exit 1; }
+fi
+read -rp "选架构 [1]x64 [2]aarch64 [3]both（回车=both）: " ainput
+case "$ainput" in
+  ""|3|both|BOTH)   SEL_ARCHS=(x64 aarch64) ;;
+  1|x64|X64)        SEL_ARCHS=(x64) ;;
+  2|aarch64|AARCH64) SEL_ARCHS=(aarch64) ;;
+  *) echo "  无效输入，默认 both"; SEL_ARCHS=(x64 aarch64) ;;
+esac
+JDK_COUNT=$(( ${#SEL_VERSIONS[@]} * ${#SEL_ARCHS[@]} ))
+TOTAL=$(( 2 + JDK_COUNT ))
+echo "→ 将下载 JDK 版本: ${SEL_VERSIONS[*]}  架构: ${SEL_ARCHS[*]}  共 $JDK_COUNT 个"
+
 i=3
-for v in 8 11 17 21; do
-  for arch in x64 aarch64; do
+for v in "${SEL_VERSIONS[@]}"; do
+  for arch in "${SEL_ARCHS[@]}"; do
     IFS=$'\t' read -r ver link sha name <<<"$(jdk_meta "$v" "$arch" || true)"
     if [[ -z "$sha" ]]; then
-      echo "  [$i/10] JDK $v $arch meta 缺失，跳过"; i=$((i+1)); continue
+      echo "  [$i/$TOTAL] JDK $v $arch meta 缺失，跳过"; i=$((i+1)); continue
     fi
     dest="$CACHE/$name"
-    echo "[$i/10] JDK $v  $ver  $arch"
+    echo "[$i/$TOTAL] JDK $v  $ver  $arch"
     if [[ -f "$dest" ]] && echo "$sha  $dest" | sha256sum -c - >/dev/null 2>&1; then
       echo "  cached (sha256 ok)"
     else
@@ -211,6 +237,14 @@ done
 echo "===== DONE ====="
 echo "--- MANIFEST ---"; cat "$MANIFEST"
 echo "--- VERIFY (x64 java -version; aarch64 ELF 架构确认) ---"
-for v in 8 11 17 21; do printf "jdk-%-2s-x64     " "$v"; "$JDK_DIR/jdk-${v}-x64/bin/java" -version 2>&1 | head -1; done
-for v in 8 11 17 21; do printf "jdk-%-2s-aarch64  " "$v"; [ -d "$JDK_DIR/jdk-${v}-aarch64" ] && echo "present (sha256+ELF verified)" || echo "MISSING"; done
+for v in "${SEL_VERSIONS[@]}"; do
+  case " ${SEL_ARCHS[*]} " in *" x64 "*)
+    printf "jdk-%-2s-x64     " "$v"; "$JDK_DIR/jdk-${v}-x64/bin/java" -version 2>&1 | head -1 ;;
+  esac
+done
+for v in "${SEL_VERSIONS[@]}"; do
+  case " ${SEL_ARCHS[*]} " in *" aarch64 "*)
+    printf "jdk-%-2s-aarch64  " "$v"; [ -d "$JDK_DIR/jdk-${v}-aarch64" ] && echo "present (sha256+ELF verified)" || echo "MISSING" ;;
+  esac
+done
 echo "--- arthas dist contents ---"; ls "$DIST_DIR" | head -20
