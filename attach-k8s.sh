@@ -21,6 +21,7 @@ TMP_IN_POD="/tmp/arthas-dist.tar.gz"   # 容器内落点，退出时清理
 
 log_error() { printf "\033[31m %s \033[0m\n" "$1"; }
 log_info()  { printf "\033[34m %s \033[0m\n" "$1"; }
+log_warn()  { printf "\033[33m %s \033[0m\n" "$1"; }
 
 command -v kubectl >/dev/null || { log_error "kubectl not found in PATH"; exit 1; }
 command -v tar    >/dev/null || { log_error "tar not found"; exit 1; }
@@ -73,12 +74,25 @@ trap cleanup_tmp EXIT
 container_java=$(kubectl exec -n "$ns" "$podname" -- sh -c '
   java_path=$(command -v java 2>/dev/null)
   if [ -z "$java_path" ]; then
+    # 扫 cmdline 找真正的 java 二进制（basename 含 java 且可执行），而非盲取 $1 ——
+    # 否则 `sh -c "java -jar app.jar"` 这类 wrapper 会把 sh 当 java，导致 `sh -j: invalid option`
     for p in /proc/[0-9]*; do
       c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
-      case "$c" in *java*) set -- $c; java_path=$1; break ;; esac
+      [ -z "$c" ] && continue
+      set -- $c
+      for tok in "$@"; do
+        b=$(basename "$tok" 2>/dev/null)
+        case "$b" in *java*)
+          rp=$(readlink -f "$tok" 2>/dev/null || echo "$tok")
+          [ -x "$rp" ] && { java_path="$rp"; break 2; }
+          ;;
+        esac
+      done
     done
   fi
   [ -z "$java_path" ] && { echo "java_kind=none"; exit 0; }
+  # 保险：拿到非 java 二进制（不应发生）按 none 走 fallback，别让 sh 混进 RUN_JAVA
+  case "$(basename "$java_path")" in *java*) ;; *) echo "java_kind=none"; exit 0 ;; esac
   echo "java_path=$java_path"
   real=$(readlink -f "$java_path" 2>/dev/null || echo "$java_path")
   jh=$(dirname "$(dirname "$real")")
@@ -122,28 +136,39 @@ else
   tgt_ver=$(kubectl exec -n "$ns" "$podname" -- sh -c '
     for p in /proc/[0-9]*; do
       c=$(tr "\0" " " <"$p/cmdline" 2>/dev/null)
-      case "$c" in *java*)
-        set -- $c; bin=$1; pid=$(basename "$p")
-        jh=$(dirname "$(dirname "$bin")")
-        # 探测 1：release
-        rel="${jh:+$jh/}release"
-        [ -z "$jh" ] && rel=""
-        if [ -n "$rel" ] && [ -f "$rel" ]; then echo "REL:"; cat "$rel"; exit 0; fi
-        # 探测 2：class major version
-        for a in $c; do
-          case "$a" in
-            *.jar)
-              [ -f "$a" ] || continue
-              fc=$(unzip -Z1 "$a" 2>/dev/null | grep "\.class$" | head -1)
-              [ -z "$fc" ] && continue
-              mj=$(unzip -p "$a" "$fc" 2>/dev/null | od -An -tu1 -j6 -N2 2>/dev/null | awk "{print \$1*256+\$2}")
-              case "$mj" in 52) echo "MAJOR:8"; exit 0;; 55) echo "MAJOR:11"; exit 0;; 61) echo "MAJOR:17"; exit 0;; 65) echo "MAJOR:21"; exit 0;; esac
-              ;;
-          esac
-        done
-        # 探测 3：bin -version
-        "$bin" -version 2>&1 | head -1; exit 0 ;;
-      esac
+      [ -z "$c" ] && continue
+      case "$c" in *java*) : ;; *) continue ;; esac
+      set -- $c; pid=$(basename "$p")
+      # 探测 2：class major version（不依赖 bin，cmdline 里有 jar 即可）
+      for a in $c; do
+        case "$a" in
+          *.jar)
+            [ -f "$a" ] || continue
+            fc=$(unzip -Z1 "$a" 2>/dev/null | grep "\.class$" | head -1)
+            [ -z "$fc" ] && continue
+            mj=$(unzip -p "$a" "$fc" 2>/dev/null | od -An -tu1 -j6 -N2 2>/dev/null | awk "{print \$1*256+\$2}")
+            case "$mj" in 52) echo "MAJOR:8"; exit 0;; 55) echo "MAJOR:11"; exit 0;; 61) echo "MAJOR:17"; exit 0;; 65) echo "MAJOR:21"; exit 0;; esac
+            ;;
+        esac
+      done
+      # 找真正的 java 二进制（探测 1/3 需要；避免把 sh 当 java）
+      bin=""
+      for tok in "$@"; do
+        b=$(basename "$tok" 2>/dev/null)
+        case "$b" in *java*)
+          rp=$(readlink -f "$tok" 2>/dev/null || echo "$tok")
+          [ -x "$rp" ] && { bin="$rp"; break; }
+          ;;
+        esac
+      done
+      [ -z "$bin" ] && continue
+      jh=$(dirname "$(dirname "$bin")")
+      # 探测 1：release
+      rel="${jh:+$jh/}release"
+      [ -z "$jh" ] && rel=""
+      if [ -n "$rel" ] && [ -f "$rel" ]; then echo "REL:"; cat "$rel"; exit 0; fi
+      # 探测 3：bin -version
+      "$bin" -version 2>&1 | head -1; exit 0
     done; echo UNKNOWN' 2>/dev/null)
   # 解析三道标记
   case "$tgt_ver" in
