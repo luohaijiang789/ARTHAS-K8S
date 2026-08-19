@@ -53,19 +53,19 @@ cd ARTHAS-K8S
 bash fetch.sh
 ```
 
-`fetch.sh` 幂等下载 arthas 4.3.4 + 8 个 JDK（4 版本 × 2 架构），全部 sha256 + ELF 架构双确认，解压生成 `MANIFEST.txt`。重跑只补缺失、可更新 patch 版本。
+`fetch.sh` 幂等下载 arthas（动态拉最新 release，可 `ARTHAS_VERSION=` 覆盖）+ JDK（**交互式选版本 8/11/17/21 + 架构 x64/aarch64/both，回车=全选**），全部 sha256 + ELF 架构双确认，解压生成 `MANIFEST.txt`。重跑只补缺失、可更新 patch 版本。
+
+**依赖一次性检查**：启动时全检 `curl tar unzip jq sha256sum readelf`，缺的攒齐一次性提示按发行版（EulerOS/centos yum、debian apt、alpine apk）的一键安装命令；jq 缺时会提示下静态二进制（EulerOS 源常无 jq 包）。K8s attach 另需 `kubectl` 且能访问目标集群。
 
 **装完自检**：
 ```bash
-cat MANIFEST.txt                                    # 10 行清单（arthas 2 + JDK 8）
+cat MANIFEST.txt                                    # 清单（arthas 2 + 你选的 JDK 数）
 for v in 8 11 17 21; do jdk/jdk-$v-x64/bin/java -version 2>&1 | head -1; done
 jdk/jdk-17-x64/bin/java -jar arthas/arthas-boot.jar   # 起本机 arthas 验证（路径 B）
 ```
 看到 arthas 横幅（自报 4.3.3，功能为 4.3.4）即底座就绪。
 
-**依赖**：`curl tar unzip jq sha256sum readelf`（启动时自检，缺失即报具体名）。K8s attach 另需 `kubectl` 且能访问目标集群。
-
-> 底座约 **3.7G**，不入 git（见[目录结构](#目录结构)）。clone 后 `fetch.sh` 重建。
+> 底座体积取决于选的 JDK 数：全量（4 版本×双架构）约 **3.7G**，只下 x64 单架构约 **1.8G**。不入 git（见[目录结构](#目录结构)）。clone 后 `fetch.sh` 重建。
 
 ### 2. 摸底加固情况（必做）
 
@@ -159,7 +159,7 @@ thread -b                                  找阻塞线程 / 死锁
 ARTHAS-K8S/
 ├── Readme.md                             # 精炼门面
 ├── .gitignore                            # 排除 3.7G 底座 + 编辑器临时 + reports/
-├── fetch.sh                              # 幂等下载/校验/解压，生成 MANIFEST
+├── fetch.sh                              # 幂等下载/校验/解压，生成 MANIFEST；JDK 版本+架构可选，依赖一次性检查
 ├── probe-k8s.sh                          # 摸底 pod 加固 6 项，判定 attach 路径
 ├── attach-k8s.sh                         # 路径 A：kubectl exec（未加固 pod）
 ├── attach-ephemeral.sh                   # 路径 C：kubectl debug 临时容器（加固 pod 主力）
@@ -195,12 +195,12 @@ JDK 8 个（4 版本 × 2 架构）：
 
 | 组件 | 版本 | 来源 |
 |---|---|---|
-| Arthas | 4.3.4 (release) | 阿里云 maven / arthas.aliyun.com CDN |
+| Arthas | 4.3.4+（fetch 动态拉最新 release，可 `ARTHAS_VERSION=` 锁定） | 阿里云 maven / arthas.aliyun.com CDN |
 | JDK 8 / 11 / 17 / 21 | 8u502 / 11.0.32 / 17.0.20 / 21.0.12 | 清华 TUNA / Adoptium Temurin |
 
-> arthas boot 启动横幅自报 4.3.3——release tag 与 jar 内部版本标记不一致，功能为 4.3.4。
+> arthas boot 启动横幅自报 4.3.3——release tag 与 jar 内部版本标记不一致，功能为 4.3.4。`fetch.sh` 默认拉最新版（从 maven metadata `<release>`），拉取失败回退 4.3.4。
 
-完整 sha256 + ELF 架构确认见 [MANIFEST.txt](MANIFEST.txt)。MANIFEST 格式：`组件 版本/架构 ver sha256 文件名`，共 10 行。
+完整 sha256 + ELF 架构确认见 [MANIFEST.txt](MANIFEST.txt)。MANIFEST 格式：`组件 版本/架构 ver sha256 文件名`，行数 = 2（arthas）+ 实际下载的 JDK 数（满量 8 个 → 共 10 行）。
 
 **镜像策略**（为下载速度）：
 - arthas dist → 阿里云 maven，`.sha256` 走 maven central 校验
@@ -280,9 +280,9 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 ## 路线图
 
 **已实现**：
-- ✅ fetch.sh 装底座（sha256 + ELF 双确认、json 防中毒）
+- ✅ fetch.sh 装底座（sha256 + ELF 双确认、json 防中毒；**动态拉最新 Arthas 版本**、**JDK 版本+架构交互式可选**、**依赖一次性检查 + 按发行版给一键安装命令**）
 - ✅ probe-k8s.sh 摸底 6 项 + 路径建议（CSV + 路径分布汇总）
-- ✅ 路径 A：kubectl exec（容器 java + 三道版本探测 fallback）
+- ✅ 路径 A：kubectl exec（容器 java + 三道版本探测 fallback；JRE-only 有 shell 时也走此路传 JDK）
 - ✅ 路径 C：kubectl debug 临时容器（零侵入、三道探测 + class major 兜底）
 - ✅ JDK 8/11/17/21 × x64/aarch64 全覆盖
 - ✅ 本地 kind 集群试跑：probe 矩阵 4 形态全命中、路径 A/C 端到端跑通、修 3 个路径 C bug（cp dest 写法 / 默认镜像无 glibc / cleanup patch 死代码）

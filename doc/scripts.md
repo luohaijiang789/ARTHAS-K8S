@@ -6,20 +6,27 @@
 
 ## fetch.sh — 装底座
 
-**做什么**：幂等下载 arthas 4.3.4（boot.jar + dist）+ 8 个 JDK（4 版本 × 2 架构），全部校验，解压，生成 MANIFEST。
+**做什么**：幂等下载 arthas（动态拉最新 release，可 `ARTHAS_VERSION=` 锁定）+ JDK（**交互式选版本 8/11/17/21 + 架构 x64/aarch64/both，回车=全量 8 个**），全部校验，解压，生成 MANIFEST。
 
 ### 流程
 
 ```
-依赖检查 → 下 arthas dist zip（sha256 校验）→ 解压 dist
-        → 下 arthas-boot.jar（与 dist 内的同名 jar 字节比对）
-        → 循环 8 个 JDK：取 Adoptium API 元数据 → 下 tar（sha256 校验）→ 解压 → ELF 架构确认
-        → 清理旧 json → 生成 MANIFEST → 自检输出
+依赖检查（一次性全检，缺的攒齐 + 按发行版给一键安装命令）
+→ 动态拉 Arthas 最新版本（maven metadata，失败回退 4.3.4）
+→ 下 arthas dist zip（sha256 校验）→ 解压 dist
+→ 下 arthas-boot.jar（与 dist 内的同名 jar 字节比对）
+→ 交互选 JDK 版本 + 架构
+→ 循环选中的 JDK：取 Adoptium API 元数据 → 下 tar（sha256 校验）→ 解压 → ELF 架构确认
+→ 清理旧 json → 生成 MANIFEST → 自检输出
 ```
 
 ### 关键决策
 
-**依赖检查**（开头）：`curl jq tar unzip sha256sum readelf` 缺一即报具体名退出。旧版无检查，缺失时报原始错不友好。
+**依赖检查一次性全检**：`curl jq tar unzip sha256sum readelf` 全部先查一遍，缺的攒齐再退，不再缺一个拦一次。识别 `/etc/os-release` 按发行版（EulerOS/centos yum、debian apt、alpine apk）打印一键安装命令；`sha256sum` 在 coreutils、`readelf` 在 binutils 自动映射；`jq` 缺时单独提示下静态二进制（EulerOS 源常无 jq 包）。**只打印不自动执行**——装包要 root 且改系统，由用户决定。
+
+**动态获取 Arthas 版本**：硬编码版本会在 Arthas 发新版后过期。从 maven metadata 拉 `<release>` 最新版；`ARTHAS_VERSION` 环境变量可强制锁定；拉取失败回退默认 4.3.4 并告警。
+
+**JDK 版本+架构可选**：原版无脑下全部 8 个（~1.6G）。改为交互问——版本空格分隔输入（回车全选，非法忽略），架构 1=x64/2=aarch64/3或回车=both。MANIFEST、VERIFY、进度计数 `[i/总数]` 均按实际选中项动态。操作节点只关心特定架构/版本时省时省地。
 
 **json 元数据防中毒**：Adoptium API 结果缓存到 `cache/jdk<v>-<arch>.json`，但**启动时用 `jq -e` 校验有效性**。API 限流/错误页会缓存坏 json → 后续 sha/link 全空 → 下错路径。校验失败自动重拉，仍无效则跳过该 JDK（不静默下错）。
 
@@ -42,7 +49,7 @@ jdk     8         x64    1.8.0_502-b07  <sha256>  OpenJDK8U-jdk_x64_linux_hotspo
 ...
 ```
 
-10 行（arthas 2 + JDK 8），是版本锚点——底座不入 git，MANIFEST 入 git，clone 后 fetch 重建的底座可对照 MANIFEST 确认版本一致。
+满量 10 行（arthas 2 + JDK 8），是版本锚点——底座不入 git，MANIFEST 入 git，clone 后 fetch 重建的底座可对照 MANIFEST 确认版本一致。选了部分 JDK 时行数相应减少。
 
 ---
 
