@@ -15,3 +15,6 @@ cache/
 
 # === 批量验证报告产出（不进 git）===
 reports/
+
+# fetch 自动生成，内容依赖本地选的版本/架构，与 arthas/jdk/cache 同类不入 git
+MANIFEST.txt
