@@ -42,18 +42,49 @@
 
 企业级加固环境不能假设 attach 路径——distroless 无 shell、JRE-only 无 attach API、readOnlyRootFS、非 root、`-XX:+DisableAttachMechanism`、准入禁 exec/ephemeral……任何一条都让"用容器 java 跑 arthas"失效。**流程：装底座 → 摸底 → 按结果选路**。
 
-### 1. clone + 装底座
+### 1. 获取代码 + 装底座
+
+仓库地址：`https://github.com/luohaijiang789/ARTHAS-K8S`。下面任选其一，无 git 环境也能拿到代码：
 
 ```bash
-# SSH（已配 GitHub SSH key）
+# 方案 ① git clone SSH（已配 GitHub SSH key）
 git clone git@github.com:luohaijiang789/ARTHAS-K8S.git
-# 或 HTTPS（无需 SSH key）
+
+# 方案 ② git clone HTTPS（无需 SSH key）
 git clone https://github.com/luohaijiang789/ARTHAS-K8S.git
-cd ARTHAS-K8S
+
+# 方案 ③ GitHub tarball（无 git，用 curl）——下载并解压最新 main
+curl -fsSL https://github.com/luohaijiang789/ARTHAS-K8S/archive/refs/heads/main.tar.gz -o arthas-k8s.tar.gz
+tar -xzf arthas-k8s.tar.gz && mv ARTHAS-K8S-main ARTHAS-K8S && cd ARTHAS-K8S
+
+# 方案 ③' wget 版（连 curl 都没有）
+wget -qO- https://github.com/luohaijiang789/ARTHAS-K8S/archive/refs/heads/main.tar.gz | tar -xz
+mv ARTHAS-K8S-main ARTHAS-K8S && cd ARTHAS-K8S
+
+# 方案 ④ gh CLI（已装 GitHub CLI，自动认凭证、顺带可 fork）
+gh repo clone luohaijiang789/ARTHAS-K8S
+
+# 方案 ⑤ 只要脚本不要历史（磁盘/网络受限，单文件逐个下到当前目录）
+base=https://raw.githubusercontent.com/luohaijiang789/ARTHAS-K8S/main
+curl -fsSL $base/fetch.sh -o fetch.sh
+curl -fsSL $base/probe-k8s.sh -o probe-k8s.sh
+curl -fsSL $base/attach-k8s.sh -o attach-k8s.sh
+curl -fsSL $base/attach-ephemeral.sh -o attach-ephemeral.sh
+curl -fsSL $base/stop-arthas.sh -o stop-arthas.sh
+```
+
+> 方案 ①② 拿到完整仓库含 `doc/`；方案 ③ ③' ④ 是快照（无 `.git`，不能 `git pull` 更新，重跑即可拿最新）；方案 ⑤ 最省，但拿不到 `doc/` 深入文档，`fetch.sh` 重建底座后功能不缺。
+
+拿到代码后装底座：
+
+```bash
+cd ARTHAS-K8S   # 方案 ⑤ 无需此步，已在当前目录
 bash fetch.sh
 ```
 
 `fetch.sh` 幂等下载 arthas（动态拉最新 release，可 `ARTHAS_VERSION=` 覆盖）+ JDK（**交互式选版本 8/11/17/21 + 架构 x64/aarch64/both，回车=全选**），全部 sha256 + ELF 架构双确认，解压生成 `MANIFEST.txt`。重跑只补缺失、可更新 patch 版本。
+
+> **选架构前可探测集群 pod 架构分布**：选架构那步前会问「探测集群 pod 架构分布以辅助选架构? [Y/n]」，回车默认探测。它用 `kubectl get nodes/pods` 统计**节点架构分布**与**pod 按节点架构分布**（pod 架构 = 其所在节点架构），并归一化成 `x64`/`aarch64`（与 `jdk-<v>-<arch>` 目录名一致，amd64/x86_64→x64，arm64/aarch64→aarch64）。看到集群只有 x64 节点就不用下 aarch64，省一半空间。无 kubectl / 连不上集群时自动跳过，不影响下载。
 
 **依赖一次性检查**：启动时全检 `curl tar unzip jq sha256sum readelf`，缺的攒齐一次性提示按发行版（EulerOS/centos yum、debian apt、alpine apk）的一键安装命令；jq 缺时会提示下静态二进制（EulerOS 源常无 jq 包）。K8s attach 另需 `kubectl` 且能访问目标集群。
 
@@ -204,8 +235,13 @@ JDK 8 个（4 版本 × 2 架构）：
 
 **镜像策略**（为下载速度）：
 - arthas dist → 阿里云 maven，`.sha256` 走 maven central 校验
-- JDK → 清华 TUNA Adoptium 镜像，sha256 用官方 Adoptium API 校验（镜像内容与官方一致）
-- `fetch.sh` 内置源回退：JDK 清华 TUNA 失败回退 Adoptium 官方链接（`api.adoptium.net` 返回的 `link`）；arthas sha 源失败降级用已缓存 zip（完整性 `unzip -t` 校验）
+- JDK → 清华 TUNA Adoptium 镜像（国内高校镜像，实测 ~3 MB/s，比官方 GitHub 快约 26 倍），sha256 用官方 Adoptium API 校验
+- **TUNA 滞后处理**：TUNA 镜像常滞后官方几个 build（缓存旧 GA release，文件名/sha 与官方 latest 不同）。fetch.sh 先 HEAD 探测 TUNA 是否有 latest 文件名：有 → 直接快速下；**无（滞后）→ 列 TUNA 目录找实际缓存的旧 build，提示选源让你决策**：
+  - `[1]` 官方 GitHub（最新 build，较慢，sha 已校验）
+  - `[2]` TUNA 镜像（旧 build，快，sha 也可校验——旧 build 是合法 GA release，其 sha 从 Adoptium API 的 release 数组查到）
+
+  回车默认 `[2]`（快）。官方 GitHub release 在国内常 ~100 KB/s，197MB 要 ~33 分钟；TUNA 旧 build 只要 ~1 分钟。差一个 patch 版本对漏洞验证无影响，故默认快。已缓存的旧 build 重跑自动复用，不重复提示/下载。
+- arthas sha 源失败降级用已缓存 zip（完整性 `unzip -t` 校验）
 
 **校验强度**：8 个 JDK 均 sha256 + ELF 架构双确认（`readelf Machine` 校验 aarch64）；arthas-boot.jar 与已校验 dist 内的同名 jar 字节比对；json 元数据缓存启动时校验有效性（防 API 限流/错误页缓存中毒）。
 
@@ -280,7 +316,7 @@ Arthas attach 时，跑 boot 的 JDK 与目标 JVM 必须匹配，否则：
 ## 路线图
 
 **已实现**：
-- ✅ fetch.sh 装底座（sha256 + ELF 双确认、json 防中毒；**动态拉最新 Arthas 版本**、**JDK 版本+架构交互式可选**、**依赖一次性检查 + 按发行版给一键安装命令**）
+- ✅ fetch.sh 装底座（sha256 + ELF 双确认、json 防中毒；**动态拉最新 Arthas 版本**、**JDK 版本+架构交互式可选**、**依赖一次性检查 + 按发行版给一键安装命令**、**选架构前探测集群 pod 架构分布**、**TUNA 滞后时提示选源——快/最新二选一**）
 - ✅ probe-k8s.sh 摸底 6 项 + 路径建议（CSV + 路径分布汇总）
 - ✅ 路径 A：kubectl exec（容器 java + 三道版本探测 fallback；JRE-only 有 shell 时也走此路传 JDK）
 - ✅ 路径 C：kubectl debug 临时容器（零侵入、三道探测 + class major 兜底）

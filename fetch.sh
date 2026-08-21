@@ -114,6 +114,13 @@ jdk_meta() {  # ver arch -> "ver\tlink\tsha\tname"
                  (.binaries[]|select(.os=="linux" and .architecture==$arch)|.package.name)] | @tsv' "$json"
 }
 
+# 列 TUNA 镜像目录里实际缓存的 .tar.gz 文件名（TUNA 常滞后官方，缓存旧 build，
+# 文件名与 API latest 不同 → 直接拼 latest URL 会 404，需列目录找实际存在的 build）
+tuna_list() {  # ver arch -> 文件名，每行一个
+  curl -s "https://mirrors.tuna.tsinghua.edu.cn/Adoptium/$1/jdk/$2/linux/" 2>/dev/null \
+    | grep -oE 'href="[^"]+\.tar\.gz"' | sed 's/href="//;s/"//'
+}
+
 # ELF 架构确认：校验下载的 JDK 二进制确实是目标架构
 # （#23：旧版 aarch64 仅 sha256，无 ELF 确认；json 错乱下错架构包时 sha 会拦，但 ELF 是二次确认）
 elf_arch_tag() {  # jdk_home -> x64/aarch64/unknown(...)
@@ -126,6 +133,51 @@ elf_arch_tag() {  # jdk_home -> x64/aarch64/unknown(...)
     "AArch64"|"aarch64") echo "aarch64" ;;
     *) echo "unknown($m)" ;;
   esac
+}
+
+# 集群 pod 架构分布探测（可选）：列 node/pod 按归一化架构(x64/aarch64)分布，
+# 帮使用者判断实际要下哪个架构的 JDK，避免盲目 both 下全量。
+# 归一化规则与 jdk-<v>-<arch> 目录名一致：amd64/x86_64→x64，arm64/aarch64→aarch64。
+probe_k8s_arch() {
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo "  （无 kubectl，跳过集群探测）"; return 1
+  fi
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    echo "  （kubectl 连不上集群，跳过——确认 ~/.kube/config 或当前 context）"; return 1
+  fi
+  local tmp; tmp=$(mktemp -d 2>/dev/null || mktemp -d -t arthas)
+  if ! kubectl get nodes -o json >"$tmp/nodes.json" 2>/dev/null \
+     || ! kubectl get pods -A -o json >"$tmp/pods.json" 2>/dev/null; then
+    echo "  （列举 node/pod 失败，跳过探测）"; rm -rf "$tmp"; return 1
+  fi
+  # 节点名 → 归一化架构 的映射表
+  local archmap
+  archmap=$(jq -r '
+    def norm: ascii_downcase |
+      if   . == "amd64" or . == "x86_64" or . == "x64" then "x64"
+      elif . == "arm64" or . == "aarch64"             then "aarch64"
+      else . end;
+    [.items[] | {key:.metadata.name, value:((.metadata.labels["kubernetes.io/arch"] // "unknown")|norm)}]
+    | from_entries
+  ' "$tmp/nodes.json" 2>/dev/null) || { rm -rf "$tmp"; echo "  （解析 node 架构失败，跳过）"; return 1; }
+
+  echo "  节点架构分布:"
+  jq -r '
+    def norm: ascii_downcase |
+      if   . == "amd64" or . == "x86_64" or . == "x64" then "x64"
+      elif . == "arm64" or . == "aarch64"             then "aarch64"
+      else . end;
+    [.items[] | (.metadata.labels["kubernetes.io/arch"] // "unknown")|norm]
+    | group_by(.) | map("\(length)\t\(.[0])")[]
+  ' "$tmp/nodes.json" 2>/dev/null \
+    | sort -rn | sed 's/^/    /' || true
+  echo "  pod 按节点架构分布（pod 架构 = 其所在节点架构）:"
+  jq --argjson na "$archmap" -r '
+    [.items[] | (.spec.nodeName // "unknown") as $n | ($na[$n] // "unknown")]
+    | group_by(.) | map("\(length)\t\(.[0])")[]
+  ' "$tmp/pods.json" 2>/dev/null \
+    | sort -rn | sed 's/^/    /' || true
+  rm -rf "$tmp"
 }
 
 echo "===== Arthas ${AR_VERSION} ====="
@@ -186,6 +238,11 @@ else
   done
   [ "${#SEL_VERSIONS[@]}" -eq 0 ] && { echo "无有效版本，退出"; exit 1; }
 fi
+# 选架构前可先探测集群 pod 架构分布，按实际分布决定下 x64 / aarch64 / both（而非盲目全量）
+read -rp "探测集群 pod 架构分布以辅助选架构? [Y/n] " probe
+case "${probe:-Y}" in
+  y|Y|yes) probe_k8s_arch || true ;;
+esac
 read -rp "选架构 [1]x64 [2]aarch64 [3]both（回车=both）: " ainput
 case "$ainput" in
   ""|3|both|BOTH)   SEL_ARCHS=(x64 aarch64) ;;
@@ -204,13 +261,68 @@ for v in "${SEL_VERSIONS[@]}"; do
     if [[ -z "$sha" ]]; then
       echo "  [$i/$TOTAL] JDK $v $arch meta 缺失，跳过"; i=$((i+1)); continue
     fi
-    dest="$CACHE/$name"
     echo "[$i/$TOTAL] JDK $v  $ver  $arch"
+    dest="$CACHE/$name"
+    # 缓存命中（latest sha 校验通过）→ 跳过
     if [[ -f "$dest" ]] && echo "$sha  $dest" | sha256sum -c - >/dev/null 2>&1; then
       echo "  cached (sha256 ok)"
     else
-      dl "$TUNA/$v/jdk/$arch/linux/$name" "$dest" || dl "$link" "$dest"
-      echo "$sha  $dest" | sha256sum -c -
+      # TUNA 镜像常滞后官方（缓存旧 build，sha 与 latest 不同）。先 HEAD 探测 latest 文件名是否在 TUNA。
+      tuna_url="$TUNA/$v/jdk/$arch/linux/$name"
+      tuna_code=$(curl -s -o /dev/null -w "%{http_code}" -I -L "$tuna_url" 2>/dev/null || echo 000)
+      if [[ "$tuna_code" == "200" ]]; then
+        # TUNA 已同步 latest → 直接快速下，校验 latest sha
+        dl "$tuna_url" "$dest"
+        if echo "$sha  $dest" | sha256sum -c - >/dev/null 2>&1; then
+          echo "  ✓ TUNA 镜像（与官方同步，快）"
+        else
+          echo "  ⚠ TUNA 文件 sha 与官方 latest 不符，转选源"; _choose=1
+        fi
+      else
+        _choose=1   # TUNA 404/不可达 → 滞后，进选源
+      fi
+      if [[ "${_choose:-0}" == "1" ]]; then
+        _choose=0
+        # 列 TUNA 目录，按 API 数组新→旧取第一个也在 TUNA 的 build（其 sha 可从 API 查到 → 能校验）
+        tuna_files=$(tuna_list "$v" "$arch")
+        jsonf="$CACHE/jdk${v}-${arch}.json"
+        pick_name=""; pick_ver=""; pick_sha=""
+        if [[ -f "$jsonf" ]]; then
+          while IFS=$'\t' read -r tname tver tsha; do
+            [[ -z "$tname" ]] && continue
+            if grep -qxF "$tname" <<<"$tuna_files"; then pick_name="$tname"; pick_ver="$tver"; pick_sha="$tsha"; break; fi
+          done < <(jq -r --arg arch "$arch" '.[] | [(.binaries[]|select(.os=="linux" and .architecture==$arch)|.package.name), .version_data.openjdk_version, (.binaries[]|select(.os=="linux" and .architecture==$arch)|.package.checksum)] | @tsv' "$jsonf")
+        fi
+        if [[ -n "$pick_name" ]]; then
+          # 重跑幂等：若旧 build 已缓存且 sha 通过，直接复用，不再提示/重下
+          pick_dest="$CACHE/$pick_name"
+          if [[ -f "$pick_dest" ]] && echo "$pick_sha  $pick_dest" | sha256sum -c - >/dev/null 2>&1; then
+            echo "  cached (TUNA 旧 build $pick_ver，sha256 ok)"
+            dest="$pick_dest"; ver="$pick_ver"; sha="$pick_sha"; name="$pick_name"
+          else
+          echo "  ⚠ TUNA 镜像滞后：缓存旧 build $pick_ver，官方最新 $ver（sha 不同）"
+          echo "    [1] 官方 GitHub（最新 $ver，较慢，sha 已校验）"
+          echo "    [2] TUNA 镜像（旧 $pick_ver，快，sha 可校验）"
+          read -rp "  选源 [1/2，回车=2 快]: " sc
+          case "${sc:-2}" in
+            1) dl "$link" "$dest"; echo "$sha  $dest" | sha256sum -c - || { echo "  ❌ 官方 sha 校验失败"; exit 1; } ;;
+            2)
+              dest="$CACHE/$pick_name"
+              dl "$TUNA/$v/jdk/$arch/linux/$pick_name" "$dest"
+              echo "$pick_sha  $dest" | sha256sum -c - || { echo "  ❌ TUNA 旧 build sha 校验失败"; exit 1; }
+              echo "  ✓ TUNA 旧 build $pick_ver（快，sha 已校验）"
+              # 实际下的是旧 build，覆盖 ver/sha/name 让 MANIFEST 记录正确
+              ver="$pick_ver"; sha="$pick_sha"; name="$pick_name"
+              ;;
+            *) echo "  无效输入，默认官方"; dl "$link" "$dest"; echo "$sha  $dest" | sha256sum -c - || exit 1 ;;
+          esac
+          fi
+        else
+          # TUNA 列目录失败或无匹配旧 build → 直接官方
+          echo "  TUNA 不可用/无匹配旧 build，走官方 GitHub（较慢）"
+          dl "$link" "$dest"; echo "$sha  $dest" | sha256sum -c - || { echo "  ❌ 官方 sha 校验失败"; exit 1; }
+        fi
+      fi
     fi
     target="$JDK_DIR/jdk-${v}-${arch}"
     rm -rf "$target"; mkdir -p "$target"
