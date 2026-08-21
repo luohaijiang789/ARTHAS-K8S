@@ -226,10 +226,14 @@ fi
 
 log_info "starting arthas-boot (dist at $ARTHAS_HOME_IN_POD)..."
 log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit），卸载 agent 释放增强"
+# 剥掉目标 pod 的 JVM 调试环境变量：目标常开远程调试（JAVA_TOOL_OPTIONS=-agentlib:jdwp=...,address=5005），
+# arthas-boot 这个新 JVM 会继承它，与目标抢同一调试端口 → "bind failed: Address already in use" → 启动即崩。
+# arthas 靠 attach API + 自有 telnet 端口通信，不需要 JDWP。
 # 首次：--telnet-port=$PORT --http-port=-1 起 agent 在随机端口（禁 web）
 # 复用：--telnet-port=$PORT 连已有 agent（arthas 检测 already using 后 skip attach 复用）
-kubectl exec -it -n "$ns" "$podname" -- "$RUN_JAVA" \
-  -jar "$ARTHAS_HOME_IN_POD/arthas-boot.jar" --telnet-port="$PORT" --http-port=-1 "$TARGET_PID"
+kubectl exec -it -n "$ns" "$podname" -- sh -c \
+  'unset JAVA_TOOL_OPTIONS _JAVA_OPTIONS JDK_JAVA_OPTIONS; exec "$0" -jar "$@"' \
+  "$RUN_JAVA" "$ARTHAS_HOME_IN_POD/arthas-boot.jar" --telnet-port="$PORT" --http-port=-1 "$TARGET_PID"
 
 # 首次起 agent 成功后写标记（复用情况标记已在）
 if [ -z "$(kubectl exec -n "$ns" "$podname" -- sh -c "cat $PORT_FILE 2>/dev/null" 2>/dev/null)" ]; then

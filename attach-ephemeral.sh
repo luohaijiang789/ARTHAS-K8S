@@ -283,6 +283,8 @@ log_warn "⚠ 退出 arthas 请输入 stop（非 Ctrl+C/quit/exit）——agent 
 
 kubectl exec -n "$ns" "$pod" -c "$EPHE_ACTUAL" -it -- sh -c '
   set -e
+  # 防御：剥掉可能继承的 JVM 调试环境变量（目标开 JDWP 时 arthas-boot 会抢端口崩，见 attach-k8s.sh 注释）
+  unset JAVA_TOOL_OPTIONS _JAVA_OPTIONS JDK_JAVA_OPTIONS
   cd /tmp
   tar -zxf arthas-dist.tar.gz
   tar -zxf jdk.tar.gz
