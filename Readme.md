@@ -199,7 +199,7 @@ ARTHAS-K8S/
 ├── arthas/                               # [gitignore] arthas 4.3.4 boot.jar + dist/
 ├── jdk/                                  # [gitignore] 8 个 JDK：jdk-{8,11,17,21}-{x64,aarch64}
 ├── cache/                                # [gitignore] 原始下载包 + 按需生成的 cp 用 tar
-├── k8s-quick/                            # K8s 日常高频操作快捷脚本（进 pod/看日志/状态等，与 arthas 无关）
+├── k8s-quick/                            # K8s 日常高频操作快捷脚本（exec/logs/status/events/top/pf/describe/ns/clean，与 arthas 无关）
 └── doc/                                  # 深入文档（架构/脚本/加固/实战/排查/协作/扩展）
     ├── README.md                         # 文档索引 + 阅读路径
     ├── architecture.md                   # 架构与设计
