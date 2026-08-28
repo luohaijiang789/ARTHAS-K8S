@@ -24,7 +24,7 @@ done
 
 # 汇总：kubectl get po + 按状态着色
 get_cmd=(kubectl get po)
-[ -n "$NS" ] && get_cmd+=(-n "$NS") || get_cmd+=(-A)
+if [ -n "$NS" ]; then get_cmd+=(-n "$NS"); else get_cmd+=(-A); fi
 [ "$WIDE" = 1 ] && get_cmd+=(-o wide)
 
 # 取数据（jsonpath 便于着色），列：ns pod ready status restarts age
@@ -71,5 +71,8 @@ for s in Running Pending Failed Unknown; do
   [ -n "${stat_count[$s]:-}" ] && printf "%s=%s  " "$s" "${stat_count[$s]}"
 done
 echo
-non_running=$(( $(printf '%s' "${stat_count[@]}" | tr ' ' '+' | bc 2>/dev/null) - ${stat_count[Running]:-0} ))
+# 非 Running 计数（纯 bash 算术，不依赖 bc——bc 常没装会让计数静默归零）
+total=0
+for s in "${!stat_count[@]}"; do total=$(( total + ${stat_count[$s]} )); done
+non_running=$(( total - ${stat_count[Running]:-0} ))
 [ "$non_running" -gt 0 ] && log_warn "有 $non_running 个非 Running pod——用 logs-pod/describe-pod 排查"
