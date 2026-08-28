@@ -28,18 +28,20 @@ select_pod() {
     mapfile -t pods < <(kubectl get po -A -o wide \
       | awk -v f="$flag" 'NR>1 && (index($2,f)||index($1,f)) && $4=="Running"{print $1"\t"$2}')
   fi
-  [ "${#pods[@]}" -eq 0 ] && { log_error "no running pod matched: ${flag:-(空)}"; return 1; }
+  [ "${#pods[@]}" -eq 0 ] && { log_error "no running pod matched: ${flag:-(空)}" >&2; return 1; }
 
   if [ "${#pods[@]}" -eq 1 ]; then
     printf '%s\t%s\n' "${pods[0]%$'\t'*}" "${pods[0]#*$'\t'}"
     return 0
   fi
-  # 多 pod：列号选
+  # 多 pod：列号选。菜单与报错走 stderr——
+  # 否则被调用方 `line=$(select_pod ...)` 的命令替换吞掉 stdout，
+  # 表现为“不显示选项就退出”（read 从继承的 stdin 读，本身没坏）。
   local i=0 idx
-  while [ "$i" -lt "${#pods[@]}" ]; do echo "$((i+1)): ${pods[$i]}"; i=$((i+1)); done
+  while [ "$i" -lt "${#pods[@]}" ]; do echo "$((i+1)): ${pods[$i]}" >&2; i=$((i+1)); done
   read -p "select pod (1-${#pods[@]}): " idx
-  case "$idx" in ''|*[!0-9]*) log_error "index error: not a number"; return 1;; esac
-  if [ "$idx" -lt 1 ] || [ "$idx" -gt "${#pods[@]}" ]; then log_error "index out of range (1-${#pods[@]})"; return 1; fi
+  case "$idx" in ''|*[!0-9]*) log_error "index error: not a number" >&2; return 1;; esac
+  if [ "$idx" -lt 1 ] || [ "$idx" -gt "${#pods[@]}" ]; then log_error "index out of range (1-${#pods[@]})" >&2; return 1; fi
   idx=$((idx-1))
   printf '%s\t%s\n' "${pods[$idx]%$'\t'*}" "${pods[$idx]#*$'\t'}"
 }
