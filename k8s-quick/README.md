@@ -11,7 +11,7 @@ describe、切 ns、清死 pod。每个都是自包含 bash，依赖只有 kubec
 | 脚本 | 作用 | 示例 |
 |---|---|---|
 | `exec-pod-k8s.sh` | 一键进 pod 交互 shell | `bash k8s-quick/exec-pod-k8s.sh order-service` |
-| `logs-pod-k8s.sh` | 看日志（单 pod -f / 多 pod 同时 tail，借鉴 kubetail） | `bash k8s-quick/logs-pod-k8s.sh order --all` |
+| `logs-pod-k8s.sh` | 看日志（单 pod -f / 多 pod 同时 tail，借鉴 kubetail；第二参数 grep 过滤） | `bash k8s-quick/logs-pod-k8s.sh order ERROR -i` |
 | `status-k8s.sh` | pod 状态速览（非 Running 着色高亮 + 汇总） | `bash k8s-quick/status-k8s.sh default` |
 | `events-k8s.sh` | 集群事件速览（倒序 + Warn/Error 着色） | `bash k8s-quick/events-k8s.sh --watch` |
 | `top-k8s.sh` | 节点/pod 资源用量（无 metrics-server 时友好提示） | `bash k8s-quick/top-k8s.sh --nodes` |

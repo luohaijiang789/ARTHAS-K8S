@@ -2,34 +2,58 @@
 # logs-pod-k8s.sh — 一键看 pod 日志（借鉴 kubetail：多 pod 同时 tail）
 #
 # 选 pod（关键字匹配，多 pod 选号或 --all 全选）→ kubectl logs -f 跟随。
+# 第二个位置参数可选，作为 grep 过滤（扩展正则；实时跟随时行缓冲不卡输出）。
+#   <pod-flag> <grep>   过滤日志（如 order-service ERROR 只看含 ERROR 的行）
 #   --all     匹配的所有 pod 同时 tail（每行前缀 pod 名）
 #   --prev    看上一次崩溃的日志（pod 重启过时有用）
 #   -c <name> 多容器 pod 指定容器
 #   --tail N  只看最后 N 行（默认全程跟随）
+#   -i        grep 忽略大小写
+#   -g <pat>  等价于第二个位置参数（显式传 grep 过滤）
 #
 # 用法:
-#   bash k8s-quick/logs-pod-k8s.sh <pod-flag>            # 单 pod 跟随
-#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --all      # 所有匹配 pod 同时 tail
-#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --prev     # 上次崩溃日志
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag>                    # 单 pod 跟随
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> ERROR               # 过滤含 ERROR 的行
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> 'ERROR|WARN' -i     # 扩展正则 + 忽略大小写
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --all               # 所有匹配 pod 同时 tail
+#   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --prev              # 上次崩溃日志
 #   bash k8s-quick/logs-pod-k8s.sh <pod-flag> --tail 100 -c app
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
-USAGE="bash k8s-quick/logs-pod-k8s.sh <pod-flag> [--all] [--prev] [--tail N] [--no-follow] [-c <container>]"
+USAGE="bash k8s-quick/logs-pod-k8s.sh <pod-flag> [grep-pattern] [--all] [--prev] [--tail N] [--no-follow] [-i] [-g <pat>] [-c <container>]"
 
-FLAG=""; ALL=0; PREV=0; TAIL=""; NOFOLLOW=0; FORCE_C=""
+FLAG=""; GREP=""; ALL=0; PREV=0; TAIL=""; NOFOLLOW=0; GREP_I=""; FORCE_C=""
+POS=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --all)  ALL=1; shift ;;
     --prev) PREV=1; shift ;;
     --tail) TAIL="$2"; shift 2 ;;
     --no-follow) NOFOLLOW=1; shift ;;
+    -i)     GREP_I=1; shift ;;
+    -g|--grep) GREP="$2"; shift 2 ;;
     -c)     FORCE_C="$2"; shift 2 ;;
     -h|--help) print_usage; exit 0 ;;
-    *) FLAG="$1"; shift ;;
+    *)
+      # 前两个裸参数：1=pod-flag，2=grep 过滤；第三个报错
+      POS=$((POS+1))
+      if [ "$POS" = 1 ]; then FLAG="$1"
+      elif [ "$POS" = 2 ]; then GREP="$1"
+      else log_error "多余位置参数: $1"; print_usage; exit 1; fi
+      shift ;;
   esac
 done
 [ -z "$FLAG" ] && { print_usage; exit 1; }
+
+# grep 过滤管道：无 GREP 时用 cat 透传；实时跟随时 --line-buffered 防输出卡在缓冲区
+if [ -n "$GREP" ]; then
+  FILTER=(grep -E --line-buffered)
+  [ "$GREP_I" = 1 ] && FILTER+=(-i)
+  FILTER+=(-e "$GREP")
+else
+  FILTER=(cat)
+fi
 
 # 收集匹配的 pod（支持 --all 多个）
 mapfile -t pods < <(kubectl get po -A -o wide \
@@ -67,24 +91,32 @@ if [ "${#sel[@]}" -eq 1 ]; then
   [ "$PREV" = 1 ] && tags="$tags [previous]"
   [ -n "$TAIL" ] && tags="$tags tail=$TAIL"
   [ "$NOFOLLOW" = 1 ] && tags="$tags (done)"
+  [ -n "$GREP" ] && tags="$tags grep=${GREP_I:+-i }\"$GREP\""
   log_info "logs $mode $pod (ns=$ns, c=$c)$tags"
-  if [ "$NOFOLLOW" = 1 ]; then
-    kubectl logs -n "$ns" "$pod" -c "$c" "${LOG_ARGS[@]}"
-  else
+  # 无过滤时 exec 接管（信号最干净）；有过滤时走管道（grep --line-buffered）
+  if [ -z "$GREP" ] && [ "$NOFOLLOW" != 1 ]; then
     log_info "Ctrl+C 退出"
     exec kubectl logs -f -n "$ns" "$pod" -c "$c" "${LOG_ARGS[@]}"
   fi
+  if [ "$NOFOLLOW" = 1 ]; then
+    kubectl logs -n "$ns" "$pod" -c "$c" "${LOG_ARGS[@]}" | "${FILTER[@]}"
+  else
+    log_info "Ctrl+C 退出（过滤中，无匹配会无输出——正常）"
+    kubectl logs -f -n "$ns" "$pod" -c "$c" "${LOG_ARGS[@]}" | "${FILTER[@]}"
+  fi
+  exit 0
 fi
 
 # 多 pod：借鉴 kubetail，每 pod 一个 kubectl logs -f，前缀 pod 短名，合并输出
-log_info "tailing ${#sel[@]} pods (Ctrl+C 退出)："
+log_info "tailing ${#sel[@]} pods${GREP:+ filtered by \"$GREP\"}（Ctrl+C 退出）："
 pids=()
 for line in "${sel[@]}"; do
   ns="${line%$'\t'*}"; pod="${line#*$'\t'}"
   c="${FORCE_C:-$(kubectl get pod -n "$ns" "$pod" -o jsonpath='{.spec.containers[0].name}' 2>/dev/null)}"
-  # pod 短名前缀（去前缀 hash），awk 加颜色前缀
+  # pod 短名前缀（去前缀 hash），awk 加颜色前缀；先过滤再前缀，grep 只匹配日志内容不碰 pod 名
   short=$(echo "$pod" | sed 's/-[a-f0-9]\{9,\}$//; s/-[a-f0-9]\{9,\}-[a-z0-9]\{5\}$//')
   kubectl logs -f -n "$ns" "$pod" -c "$c" "${LOG_ARGS[@]}" 2>&1 \
+    | "${FILTER[@]}" \
     | awk -v p="$short" '{ printf "\033[36m[%s]\033[0m %s\n", p, $0 }' &
   pids+=($!)
 done
